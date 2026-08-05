@@ -418,6 +418,47 @@ module.exports = function localApiPlugin(context, options) {
               return res.status(400).send("Error: unknown error");
             });
 
+            // 数据接口（经费等）
+            router.all("/api/DataHandler", (req, res) => {
+              if (req.method !== "POST") {
+                return res.status(400).send("Error: unknown error");
+              }
+              const data = loadData();
+              let body = req.body || {};
+              if (typeof body === "string") {
+                try {
+                  body = JSON.parse(body);
+                } catch (e) {
+                  body = {};
+                }
+              }
+              if (!body || typeof body !== "object") {
+                return res
+                  .status(400)
+                  .json({ msg: "Error: no request body" });
+              }
+              // 读取
+              if (body.get) {
+                const what = body.get;
+                if (what === "economy") {
+                  return res.json({ economy: data.economy || [] });
+                }
+                if (what === "user") {
+                  const email = body.email;
+                  return res.json(data.users[email] || null);
+                }
+              }
+              // 保存经费
+              if (body.__economy && body.__economy.economy) {
+                data.economy = body.__economy.economy;
+                saveData(data);
+                return res.json({ msg: "Success" });
+              }
+              return res
+                .status(400)
+                .json({ msg: "Error: unknown error" });
+            });
+
             app.use(router);
             return middlewares;
           },
