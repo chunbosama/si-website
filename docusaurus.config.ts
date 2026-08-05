@@ -104,7 +104,7 @@ const config: Config = {
             },
             {
               label: "邮箱",
-              href: "",
+              href: "https://mail.si-hzyz.top",
             },
           ],
         },
