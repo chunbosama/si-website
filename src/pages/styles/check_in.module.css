@@ -1,0 +1,10 @@
+.background {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  min-height: 600px;
+  background-image: url("/img/bg_0.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}

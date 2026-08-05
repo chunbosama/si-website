@@ -170,6 +170,138 @@ module.exports = function localApiPlugin(context, options) {
               return res.status(400).send("Error: unknown error");
             });
 
+            // 直播链接配置：GET 读取 / POST 保存
+            router.all("/api/LiveConfigHandler", (req, res) => {
+              const data = loadData();
+              if (req.method === "GET") {
+                return res.json({ url: data.liveUrl || "" });
+              } else if (req.method === "POST") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try {
+                    body = JSON.parse(body);
+                  } catch (e) {
+                    body = {};
+                  }
+                }
+                data.liveUrl = body.url || "";
+                saveData(data);
+                return res.send("Success");
+              }
+              return res.status(400).send("Error: unknown error");
+            });
+
+            // 签到接口
+            router.all("/api/SigninHandler", (req, res) => {
+              const data = loadData();
+              if (!data.signin) {
+                data.signin = {
+                  active: false,
+                  activeEvent: "",
+                  subtitle: "",
+                  records: {},
+                };
+              }
+
+              // 确保当前事件有记录数组
+              const ensureEvent = () => {
+                if (
+                  data.signin.activeEvent &&
+                  !data.signin.records[data.signin.activeEvent]
+                ) {
+                  data.signin.records[data.signin.activeEvent] = [];
+                }
+              };
+
+              if (req.method === "GET") {
+                const url = new URL(req.url, "http://localhost");
+                const get = url.searchParams.get("get");
+                if (get === "active") {
+                  ensureEvent();
+                  return res.json({
+                    active: data.signin.active,
+                    event: data.signin.activeEvent,
+                    subtitle: data.signin.subtitle || "",
+                    records: data.signin.active
+                      ? data.signin.records[data.signin.activeEvent] || []
+                      : [],
+                  });
+                }
+                if (get === "records") {
+                  const event = url.searchParams.get("event");
+                  return res.json(data.signin.records[event] || []);
+                }
+                if (get === "events") {
+                  // 返回所有签到事件列表（id + 时间 + 人数），按时间倒序
+                  const events = Object.keys(data.signin.records || {}).map(
+                    (ev) => ({
+                      event: ev,
+                      time: Number(ev),
+                      count: (data.signin.records[ev] || []).length,
+                    })
+                  );
+                  events.sort((a, b) => b.time - a.time);
+                  return res.json(events);
+                }
+                // 缺省返回所有记录
+                return res.json(data.signin.records || {});
+              } else if (req.method === "POST") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try {
+                    body = JSON.parse(body);
+                  } catch (e) {
+                    body = {};
+                  }
+                }
+
+                // 设置副标题
+                if (body.setSubtitle !== undefined) {
+                  data.signin.subtitle = String(body.setSubtitle);
+                  saveData(data);
+                  return res.send("Success");
+                }
+                // 发布签到：开启一个新的签到事件
+                if (body.publish === true) {
+                  const event = String(Date.now());
+                  data.signin.active = true;
+                  data.signin.activeEvent = event;
+                  if (!data.signin.records[event]) {
+                    data.signin.records[event] = [];
+                  }
+                  saveData(data);
+                  return res.json({ msg: "Success", event: event });
+                }
+                // 停止签到
+                if (body.publish === false) {
+                  data.signin.active = false;
+                  saveData(data);
+                  return res.send("Success");
+                }
+                // 提交签到：{ name, event }
+                if (body.name && body.event) {
+                  if (!data.signin.active || data.signin.activeEvent !== body.event) {
+                    return res.status(400).send("Error: 签到未开启");
+                  }
+                  const list = data.signin.records[body.event] || [];
+                  // 去重：同一名字只签一次
+                  const exists = list.some((r) => r.name === body.name);
+                  if (exists) {
+                    return res.status(400).send("Error: 已签到");
+                  }
+                  list.push({
+                    name: body.name,
+                    time: Date.now(),
+                  });
+                  data.signin.records[body.event] = list;
+                  saveData(data);
+                  return res.send("Success");
+                }
+                return res.status(400).send("Error: 参数错误");
+              }
+              return res.status(400).send("Error: unknown error");
+            });
+
             app.use(router);
             return middlewares;
           },

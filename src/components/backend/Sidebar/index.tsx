@@ -122,6 +122,34 @@ export default function Sidebar(props: {
               </svg>
               人员
             </div>
+            <div
+              className={clsx(styles.item, index === 6 && styles.item__active)}
+              onClick={() => {
+                setIndex(6);
+              }}>
+              <svg
+                height="24px"
+                viewBox="0 -960 960 960"
+                width="24px"
+                fill="#5f6368">
+                <path d="M160-200q-33 0-56.5-23.5T80-280v-400q0-33 23.5-56.5T160-760h640q33 0 56.5 23.5T880-680v400q0 33-23.5 56.5T800-200H160Zm0-80h280v-400H160v400Zm360 0h280v-140H520v140Zm0-220h280v-180H520v180Z" />
+              </svg>
+              签到
+            </div>
+            <div
+              className={clsx(styles.item, index === 7 && styles.item__active)}
+              onClick={() => {
+                setIndex(7);
+              }}>
+              <svg
+                height="24px"
+                viewBox="0 -960 960 960"
+                width="24px"
+                fill="#5f6368">
+                <path d="M160-200q-33 0-56.5-23.5T80-280v-400q0-33 23.5-56.5T160-760h400q33 0 56.5 23.5T640-680v160l160-160v480L640-440v160q0 33-23.5 56.5T560-200H160Zm400-560H160v480h400v-480Zm-280 360v-40h240v40H280Zm0-120v-40h240v40H280Z" />
+              </svg>
+              直播
+            </div>
           </div>
           <div
             className={styles.logout}

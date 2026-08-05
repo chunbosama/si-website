@@ -1,0 +1,58 @@
+.card {
+  margin: auto;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 30%;
+  min-width: 360px;
+  min-height: 240px;
+}
+
+.title {
+  align-self: center;
+  font-size: 2rem;
+  line-height: 2;
+  font-weight: 700;
+}
+
+.subtitle {
+  align-self: center;
+  font-size: 1.1rem;
+  color: var(--ifm-color-emphasis-600);
+  margin-top: -0.5rem;
+  text-align: center;
+}
+
+.composedInput {
+  display: flex;
+  flex-direction: column;
+}
+
+.input {
+  height: 40px;
+  padding: 10px;
+  border: 2px solid #ccc;
+  border-radius: 6px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--ifm-color-primary);
+}
+
+.submitButton {
+  height: 40px;
+  align-self: flex-end;
+}
+
+.closed {
+  text-align: center;
+  padding: 2rem 0;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.msg {
+  text-align: center;
+  color: var(--ifm-color-emphasis-700);
+}

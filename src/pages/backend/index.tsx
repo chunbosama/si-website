@@ -9,6 +9,8 @@ import QAManager from "@site/src/components/backend/QAManager";
 import VoteResult from "@site/src/components/backend/VoteResult";
 import SignUpManager from "@site/src/components/backend/SignUpManager";
 import MemberManager from "@site/src/components/backend/MemberManager";
+import SigninManager from "@site/src/components/backend/SigninManager";
+import LiveManager from "@site/src/components/backend/LiveManager";
 
 export default function Backend() {
   const [cookie] = useCookies();
@@ -30,6 +32,8 @@ export default function Backend() {
       <VoteResult key={3} />
       <SignUpManager key={4} />
       <MemberManager key={5} />
+      <SigninManager key={6} />
+      <LiveManager key={7} />
     </Layout>
   );
 }
