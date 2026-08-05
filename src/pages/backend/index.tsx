@@ -11,6 +11,7 @@ import SignUpManager from "@site/src/components/backend/SignUpManager";
 import MemberManager from "@site/src/components/backend/MemberManager";
 import SigninManager from "@site/src/components/backend/SigninManager";
 import LiveManager from "@site/src/components/backend/LiveManager";
+import BlogManager from "@site/src/components/backend/BlogManager";
 
 export default function Backend() {
   const [cookie] = useCookies();
@@ -34,6 +35,7 @@ export default function Backend() {
       <MemberManager key={5} />
       <SigninManager key={6} />
       <LiveManager key={7} />
+      <BlogManager key={8} />
     </Layout>
   );
 }

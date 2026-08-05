@@ -150,6 +150,20 @@ export default function Sidebar(props: {
               </svg>
               直播
             </div>
+            <div
+              className={clsx(styles.item, index === 8 && styles.item__active)}
+              onClick={() => {
+                setIndex(8);
+              }}>
+              <svg
+                height="24px"
+                viewBox="0 -960 960 960"
+                width="24px"
+                fill="#5f6368">
+                <path d="M240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520h200L520-800v200Z" />
+              </svg>
+              博客
+            </div>
           </div>
           <div
             className={styles.logout}

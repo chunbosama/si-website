@@ -4,11 +4,13 @@
  */
 const path = require("path");
 const fs = require("fs");
+const { execSync } = require("child_process");
 const express = require("express");
 const bodyParser = require("body-parser");
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : parseInt(process.argv[2] || "3000");
 const BUILD_DIR = path.join(__dirname, "build");
+const BLOG_DIR = path.join(__dirname, "blog");
 const DATA_FILE = path.join(__dirname, "local-data", "users.json");
 
 // ---- 本地数据读写（与 local-api.plugin.js 一致）----
@@ -283,6 +285,94 @@ app.post("/api/DataHandler", (req, res) => {
     return res.json({ msg: "Success" });
   }
   return res.status(400).json({ msg: "Error: unknown error" });
+});
+
+// ==== 博客 ====
+app.all("/api/BlogHandler", (req, res) => {
+  if (req.method === "GET") {
+    const url = new URL(req.url, "http://localhost");
+    const get = url.searchParams.get("get");
+    if (get === "list") {
+      // 列出所有博客
+      let files = [];
+      try {
+        files = fs.readdirSync(BLOG_DIR).filter((f) => f.endsWith(".md"));
+      } catch (e) {}
+      const blogs = files
+        .map((f) => {
+          const raw = fs.readFileSync(path.join(BLOG_DIR, f), "utf-8");
+          const titleMatch = raw.match(/^title:\s*(.+)$/m);
+          const slugMatch = raw.match(/^slug:\s*(.+)$/m);
+          return {
+            file: f,
+            title: titleMatch ? titleMatch[1].trim() : f.replace(/\.md$/, ""),
+            slug: slugMatch ? slugMatch[1].trim() : "",
+          };
+        })
+        .sort((a, b) => b.file.localeCompare(a.file));
+      return res.json(blogs);
+    }
+    if (get === "one") {
+      const file = url.searchParams.get("file");
+      if (!file) return res.status(400).send("Error: 缺少文件名");
+      const fp = path.join(BLOG_DIR, path.basename(file));
+      if (!fs.existsSync(fp)) return res.status(404).send("Error: 博客不存在");
+      return res.send(fs.readFileSync(fp, "utf-8"));
+    }
+    return res.status(400).send("Error: unknown type");
+  } else if (req.method === "POST") {
+    const body = parseBody(req.body);
+
+    // 删除博客
+    if (body.delete) {
+      const fp = path.join(BLOG_DIR, path.basename(body.delete));
+      if (fs.existsSync(fp)) {
+        fs.unlinkSync(fp);
+        return res.send("Success");
+      }
+      return res.status(404).send("Error: 博客不存在");
+    }
+
+    // 保存博客：{ title, slug, author, content, file? }
+    if (body.title && body.content) {
+      const date = new Date();
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const slug = (body.slug || "").trim().replace(/\\s+/g, "-") || dateStr;
+      // 更新时用已有文件名，新建时用 日期+slug 命名
+      const fileName =
+        body.file && /^[a-zA-Z0-9._-]+\\.md$/.test(body.file)
+          ? body.file
+          : `${dateStr}-${slug}.md`;
+      const fp = path.join(BLOG_DIR, path.basename(fileName));
+      const fmLines = [
+        "---",
+        `slug: ${slug}`,
+        `title: ${body.title.trim()}`,
+        "authors:",
+        `  - name: ${(body.author || "匿名").trim()}`,
+      ];
+      const avatar = (body.avatar || "").trim();
+      if (avatar) {
+        fmLines.push(`    image_url: ${avatar}`);
+      }
+      fmLines.push("---", "", body.content, "", "<!-- truncate -->", "");
+      const fm = fmLines.join("\n");
+      fs.writeFileSync(fp, fm, "utf-8");
+      return res.json({ msg: "Success", file: fileName });
+    }
+
+    // 重建站点
+    if (body.rebuild === true) {
+      try {
+        execSync("npm run build", { cwd: __dirname, stdio: "pipe", timeout: 120000 });
+        return res.send("Success");
+      } catch (e) {
+        return res.status(500).send("Error: 构建失败 " + e.message);
+      }
+    }
+    return res.status(400).send("Error: 参数错误");
+  }
+  return res.status(400).send("Error: unknown error");
 });
 
 // ==== 静态文件服务（生产构建 build/）====

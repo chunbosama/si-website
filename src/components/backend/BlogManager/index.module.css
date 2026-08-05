@@ -1,0 +1,148 @@
+.container {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 4rem;
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding: 2rem 1rem;
+  }
+}
+
+.titleBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 700;
+  align-self: flex-start;
+}
+
+.toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-self: center;
+}
+
+.newBtn {
+  white-space: nowrap;
+}
+
+.rebuildBtn {
+  white-space: nowrap;
+}
+
+.editor {
+  width: 100%;
+  max-width: 720px;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.editorTitle {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.input {
+  width: 100%;
+  font-size: 1rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  background: var(--ifm-background-color);
+}
+
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--ifm-color-primary);
+}
+
+.textarea {
+  width: 100%;
+  font-size: 1rem;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  background: var(--ifm-background-color);
+  resize: vertical;
+  font-family: var(--ifm-font-family-base);
+  line-height: 1.6;
+}
+
+.editorBtns {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.saveBtn {
+  min-width: 80px;
+}
+
+.table {
+  width: 100%;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+}
+
+.table > * {
+  word-break: keep-all;
+}
+
+.tableBody > * {
+  border-top: 1px solid var(--ifm-table-border-color) !important;
+}
+
+.tableRow {
+  border: none;
+}
+
+.tableRow > * {
+  text-align: center;
+  padding: 0.5rem;
+  border: none;
+  border-right: 1px solid var(--ifm-table-border-color);
+}
+
+.tableRow > *:first-child {
+  width: auto;
+}
+
+.tableRow > *:last-child {
+  width: auto;
+  border-right: none;
+}
+
+.opRow {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.operate {
+  color: var(--ifm-link-color);
+  cursor: pointer;
+}
+
+.operate:hover {
+  text-decoration: underline;
+}
+
+.empty {
+  margin-top: 1rem;
+  color: var(--ifm-color-emphasis-500);
+}
