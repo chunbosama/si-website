@@ -1,0 +1,14 @@
+---
+slug: welcome
+title: 欢迎
+authors:
+  - name: 经济是是是
+    title: 活动部副部长 算法AI社副社长
+    url: https://github.com/chunbosama
+    image_url: https://github.com/chunbosama.png
+---
+
+欢迎来到智能信息社！
+欢迎各位来算法AI社玩！
+
+<!-- truncate -->---
