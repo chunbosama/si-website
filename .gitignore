@@ -15,6 +15,9 @@
 .env.test.local
 .env.production.local
 
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# 本地数据（含账号、报名等敏感信息，不提交）
+/local-data
+
+# 本地日志
+/tmp
+*.log

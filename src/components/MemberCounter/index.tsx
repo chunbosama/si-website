@@ -1,8 +1,34 @@
 import clsx from "clsx";
+import { useEffect, useState } from "react";
 
 import styles from "./index.module.css";
 
+async function getMemberCount() {
+  try {
+    const resp = await fetch("/api/MemberConfigHandler?t=" + Date.now());
+    if (resp.ok) {
+      return await resp.json();
+    }
+  } catch (e) {}
+  return { newbie: 0, management: 0 };
+}
+
 function MemberCounter() {
+  const [count, setCount] = useState<{ newbie: number; management: number }>({
+    newbie: 0,
+    management: 0,
+  });
+
+  useEffect(() => {
+    getMemberCount().then(setCount);
+  }, []);
+
+  const newbie = Number.isFinite(count.newbie) ? count.newbie : 0;
+  const management = Number.isFinite(count.management)
+    ? count.management
+    : 0;
+  const total = newbie + management;
+
   return (
     <div className={clsx("card shadow--md", styles.card)}>
       <p>
@@ -19,9 +45,9 @@ function MemberCounter() {
         </thead>
         <tbody className={styles.tableBody}>
           <tr className={styles.tableRow}>
-            <td>57</td>
-            <td>9</td>
-            <td>66</td>
+            <td>{newbie}</td>
+            <td>{management}</td>
+            <td>{total}</td>
           </tr>
         </tbody>
       </table>

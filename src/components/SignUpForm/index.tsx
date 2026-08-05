@@ -12,6 +12,7 @@ export default function Form(props: {
   const [name, setName] = useState("");
   const [classes, setClasses] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [status, setStatus] = useState(0);
 
   const statusTexts = {
@@ -76,6 +77,25 @@ export default function Form(props: {
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
+              document.getElementById("phone")?.focus();
+            }
+          }}
+        />
+      </div>
+      <div className={styles.composedInput}>
+        <label htmlFor="phone">手机号:</label>
+        <input
+          className={styles.input}
+          type="tel"
+          id="phone"
+          placeholder="13800000000"
+          disabled={!masterSwitch}
+          value={phone}
+          onChange={(e) => {
+            setPhone(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
               (e.target as HTMLInputElement)?.blur();
               document.getElementById("submit")?.click();
             }
@@ -89,6 +109,7 @@ export default function Form(props: {
           name.length === 0 ||
           classes.length === 0 ||
           email.length === 0 ||
+          phone.length === 0 ||
           status === 1 ||
           status === 2 ||
           !masterSwitch
@@ -99,6 +120,7 @@ export default function Form(props: {
             name: name,
             classes: classes,
             email: email,
+            phone: phone,
           };
           console.log(data);
           fetch("/api/SignUpHandler", {
@@ -117,6 +139,7 @@ export default function Form(props: {
                     setName("");
                     setClasses("高一()班");
                     setEmail("");
+                    setPhone("");
                   }, 2000);
                 }
                 return response.text();

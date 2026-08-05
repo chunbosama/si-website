@@ -7,6 +7,8 @@ import EconomyManager from "@site/src/components/backend/EconomyManager";
 import Layout from "@site/src/components/backend/Layout";
 import QAManager from "@site/src/components/backend/QAManager";
 import VoteResult from "@site/src/components/backend/VoteResult";
+import SignUpManager from "@site/src/components/backend/SignUpManager";
+import MemberManager from "@site/src/components/backend/MemberManager";
 
 export default function Backend() {
   const [cookie] = useCookies();
@@ -26,6 +28,8 @@ export default function Backend() {
       <EconomyManager key={1} />
       <QAManager key={2} />
       <VoteResult key={3} />
+      <SignUpManager key={4} />
+      <MemberManager key={5} />
     </Layout>
   );
 }

@@ -4,6 +4,9 @@ import type { Config } from "@docusaurus/types";
 import type * as Preset from "@docusaurus/preset-classic";
 
 const config: Config = {
+  // 本地开发中间件插件（注册/登录接口，模拟 Cloudflare KV）
+  plugins: [require.resolve("./local-api.plugin.js")],
+
   title: "智能信息社",
   tagline: "你所热爱的，尽在此处",
   favicon: "img/favicon.ico",
