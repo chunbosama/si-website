@@ -1,0 +1,17 @@
+[Unit]
+Description=SI Website Production Server (Docusaurus static + API)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/.openclaw/workspace/si-website
+ExecStart=/usr/bin/node /home/admin/.openclaw/workspace/si-website/server.js 3000
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+# 日志
+StandardOutput=append:/home/admin/.openclaw/workspace/si-website/server.log
+StandardError=append:/home/admin/.openclaw/workspace/si-website/server.log
+
+[Install]
+WantedBy=multi-user.target
