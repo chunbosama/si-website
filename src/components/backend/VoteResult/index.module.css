@@ -49,6 +49,22 @@
   right: 0;
 }
 
+.deleteTool {
+  position: absolute;
+  right: 4rem;
+}
+
+.titleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.deleteCard {
+  white-space: nowrap;
+}
+
 .unrefreshable:hover {
   background-color: var(--ifm-card-background-color) !important;
   cursor: not-allowed !important;
@@ -99,4 +115,90 @@
 
 .textOverflow {
   color: var(--ifm-font-color-base) !important;
+}
+
+/* 投票管理面板 */
+.manage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  background: var(--ifm-card-background-color);
+}
+
+.manageTitle {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.manageLabel {
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+
+.manageInput {
+  width: 100%;
+  font-size: 1rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  background: var(--ifm-background-color);
+}
+
+.manageInput:focus {
+  outline: none;
+  border-color: var(--ifm-color-primary);
+}
+
+.manageRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.manageSmallLabel {
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.manageSmall {
+  width: 64px;
+  font-size: 1rem;
+  padding: 0.3rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+}
+
+.manageBtn {
+  margin-top: 0.25rem;
+  width: fit-content;
+}
+
+.voteRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.25rem;
+}
+
+.voteRowTitle {
+  font-size: 0.95rem;
+}
+
+.voteRowDel {
+  color: var(--ifm-link-color);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.voteRowDel:hover {
+  text-decoration: underline;
+}
+
+.manageEmpty {
+  color: var(--ifm-color-emphasis-500);
 }

@@ -40,23 +40,17 @@ async function getData() {
 }
 
 async function uploadQuestion(data: QAData) {
-  await fetch("/api/QAHandler", {
+  const resp = await fetch("/api/QAHandler", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ timestamp: Date.now(), data: data }),
-  })
-    .then((response) => {
-      if (response.ok) {
-        return response.text();
-      } else {
-        console.error("Network response was not ok");
-      }
-    })
-    .catch((error) => {
-      console.error(error);
-    });
+  });
+  if (!resp.ok) {
+    throw new Error("Network response was not ok");
+  }
+  return resp.text();
 }
 
 function Dialog(props: { onClose?: () => void; onFinish?: () => void }) {

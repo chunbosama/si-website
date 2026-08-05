@@ -310,6 +310,114 @@ module.exports = function localApiPlugin(context, options) {
               return res.status(400).send("Error: unknown error");
             });
 
+            // 投票接口
+            router.all("/api/VoteHandler", (req, res) => {
+              const data = loadData();
+              if (!data.votes) {
+                data.votes = { datas: {}, records: [] };
+              }
+
+              if (req.method === "GET") {
+                const url = new URL(req.url, "http://localhost");
+                const type = url.searchParams.get("type");
+                if (type === "get") {
+                  // 返回投票配置（datas）
+                  return res.json(data.votes.datas || {});
+                }
+                if (type === "calc") {
+                  // 统计投票结果：{ id: { itemIndex: 票数 } }
+                  const stat = {};
+                  (data.votes.records || []).forEach((rec) => {
+                    const id = rec.id;
+                    const items = rec.items || [];
+                    if (!stat[id]) stat[id] = {};
+                    items.forEach((item) => {
+                      if (!stat[id][item]) stat[id][item] = 0;
+                      stat[id][item] += 1;
+                    });
+                  });
+                  return res.json(stat);
+                }
+                return res.status(400).send("Error: unknown type");
+              } else if (req.method === "POST") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try {
+                    body = JSON.parse(body);
+                  } catch (e) {
+                    body = {};
+                  }
+                }
+                // body: { id: [选中的 item 索引], ... }，依次存入记录
+                // 或 body: { _saveDatas: {datas}, _clearRecords: bool }（后台保存投票配置）
+                if (typeof body === "object" && body !== null) {
+                  // 后台保存投票配置
+                  if (body._saveDatas !== undefined) {
+                    data.votes.datas = body._saveDatas || {};
+                    if (body._clearRecords === true) {
+                      data.votes.records = [];
+                    }
+                    saveData(data);
+                    return res.send("Success");
+                  }
+                  if (!data.votes.records) data.votes.records = [];
+                  for (const id of Object.keys(body)) {
+                    data.votes.records.push({
+                      id: id,
+                      items: Array.isArray(body[id]) ? body[id] : [],
+                      time: Date.now(),
+                    });
+                  }
+                  saveData(data);
+                  return res.send("Success");
+                }
+                return res.status(400).send("Error: 参数错误");
+              }
+              return res.status(400).send("Error: unknown error");
+            });
+
+            // Q&A 接口
+            router.all("/api/QAHandler", (req, res) => {
+              const data = loadData();
+              if (!data.qa) {
+                data.qa = {};
+              }
+
+              if (req.method === "POST") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try {
+                    body = JSON.parse(body);
+                  } catch (e) {
+                    body = {};
+                  }
+                }
+                if (!body || typeof body !== "object") {
+                  return res.status(400).send("Error: no request body.");
+                }
+                // 提交问题：{ timestamp, data: {question, answer} }
+                if (body.timestamp) {
+                  data.qa[String(body.timestamp)] = body.data || {
+                    question: "",
+                    answer: "",
+                  };
+                  saveData(data);
+                  return res.send("Success");
+                }
+                // 删除：{ delete: timestamp }
+                if (body.delete !== undefined) {
+                  delete data.qa[String(body.delete)];
+                  saveData(data);
+                  return res.send("Success");
+                }
+                return res.status(400).send("Error: unknown error");
+              } else if (req.method === "GET") {
+                // 返回所有 Q&A
+                return res.json(data.qa);
+              }
+              return res.status(400).send("Error: unknown error");
+            });
+
             app.use(router);
             return middlewares;
           },
