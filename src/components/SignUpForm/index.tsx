@@ -22,6 +22,20 @@ export default function Form(props: {
     3: "重试",
   };
 
+  // 读取后台配置的“提交后跳转链接”，有则跳转
+  const redirectAfterSubmit = async () => {
+    try {
+      const resp = await fetch("/api/SignUpConfigHandler?t=" + Date.now());
+      if (resp.ok) {
+        const data = await resp.json();
+        const url = (data.submitRedirectUrl || "").trim();
+        if (url) {
+          window.location.href = url;
+        }
+      }
+    } catch (e) {}
+  };
+
   return (
     <div className={clsx("card shadow--md", styles.card)}>
       <div className={styles.title}>加入我们</div>
@@ -142,6 +156,8 @@ export default function Form(props: {
                     setPhone("");
                   }, 2000);
                 }
+                // 提交成功后跳转到后台配置的链接（若有）
+                redirectAfterSubmit();
                 return response.text();
               } else {
                 setStatus(3);

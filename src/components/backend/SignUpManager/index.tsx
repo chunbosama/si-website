@@ -3,15 +3,15 @@ import { useEffect, useState } from "react";
 
 import styles from "./index.module.css";
 
-// 获取报名时间配置
-async function getSignupTime() {
+// 获取报名配置（时间 + 跳转链接）
+async function getSignupConfig() {
   try {
     const resp = await fetch("/api/SignUpConfigHandler?t=" + Date.now());
     if (resp.ok) {
       return await resp.json();
     }
   } catch (e) {}
-  return { start: "", end: "" };
+  return { start: "", end: "", submitRedirectUrl: "" };
 }
 
 // 保存报名时间配置
@@ -19,6 +19,15 @@ async function saveSignupTime(start: string, end: string) {
   const resp = await fetch("/api/SignUpConfigHandler", {
     method: "POST",
     body: JSON.stringify({ start: start, end: end }),
+  });
+  return resp.ok;
+}
+
+// 保存提交后跳转链接
+async function saveRedirectUrl(url: string) {
+  const resp = await fetch("/api/SignUpConfigHandler", {
+    method: "POST",
+    body: JSON.stringify({ submitRedirectUrl: url }),
   });
   return resp.ok;
 }
@@ -37,8 +46,10 @@ async function getPartList() {
 export default function SignUpManager() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [redirectUrl, setRedirectUrl] = useState("");
   const [partList, setPartList] = useState<{ [key: string]: any }>({});
   const [timeStatus, setTimeStatus] = useState(0);
+  const [redirectStatus, setRedirectStatus] = useState(0);
 
   const timeStatusText = {
     0: "保存报名时间",
@@ -46,10 +57,17 @@ export default function SignUpManager() {
     2: "已保存",
   };
 
+  const redirectStatusText = {
+    0: "保存链接",
+    1: "保存中…",
+    2: "已保存",
+  };
+
   useEffect(() => {
-    getSignupTime().then((t) => {
+    getSignupConfig().then((t) => {
       setStart(t.start || "");
       setEnd(t.end || "");
+      setRedirectUrl(t.submitRedirectUrl || "");
     });
     getPartList().then(setPartList);
   }, []);
@@ -104,6 +122,38 @@ export default function SignUpManager() {
               ).toLocaleString()}`
             : "未设置报名时间（报名默认关闭）"}
         </div>
+      </div>
+
+      {/* 提交后跳转链接编辑 */}
+      <div className={styles.configBox}>
+        <div className={styles.configLabel}>提交后跳转链接</div>
+        <div className={styles.configRow}>
+          <input
+            className={styles.input}
+            type="text"
+            placeholder="https://example.com/thanks"
+            value={redirectUrl}
+            onChange={(e) => {
+              setRedirectUrl(e.target.value);
+              setRedirectStatus(0);
+            }}
+          />
+        </div>
+        <div className={styles.configHint}>
+          填写后，用户提交报名成功会自动跳转到此链接；留空则不跳转
+        </div>
+        <button
+          className={clsx("button button--primary", styles.uploadButton)}
+          disabled={redirectStatus === 1}
+          onClick={async () => {
+            setRedirectStatus(1);
+            const ok = await saveRedirectUrl(redirectUrl);
+            setRedirectStatus(ok ? 2 : 0);
+            if (!ok) alert("保存失败");
+            setTimeout(() => setRedirectStatus(0), 1500);
+          }}>
+          {redirectStatusText[redirectStatus]}
+        </button>
       </div>
 
       {/* 报名信息列表 */}

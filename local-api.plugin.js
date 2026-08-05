@@ -120,7 +120,11 @@ module.exports = function localApiPlugin(context, options) {
             router.all("/api/SignUpConfigHandler", (req, res) => {
               const data = loadData();
               if (req.method === "GET") {
-                return res.json(data.signupTime || { start: "", end: "" });
+                return res.json({
+                  start: (data.signupTime && data.signupTime.start) || "",
+                  end: (data.signupTime && data.signupTime.end) || "",
+                  submitRedirectUrl: data.submitRedirectUrl || "",
+                });
               } else if (req.method === "POST") {
                 let body = req.body || {};
                 if (typeof body === "string") {
@@ -130,10 +134,14 @@ module.exports = function localApiPlugin(context, options) {
                     body = {};
                   }
                 }
-                data.signupTime = {
-                  start: body.start || "",
-                  end: body.end || "",
-                };
+                // 只更新调用方传入的字段，避免互相覆盖
+                const cur = data.signupTime || { start: "", end: "" };
+                if (body.start !== undefined) cur.start = body.start || "";
+                if (body.end !== undefined) cur.end = body.end || "";
+                data.signupTime = cur;
+                if (body.submitRedirectUrl !== undefined) {
+                  data.submitRedirectUrl = String(body.submitRedirectUrl) || "";
+                }
                 saveData(data);
                 return res.send("Success");
               }
