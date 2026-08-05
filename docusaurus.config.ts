@@ -40,7 +40,7 @@ const config: Config = {
         docs: {
           exclude: ["**/*.test.*"],
           // Remove this to remove the "edit this page" links.
-          editUrl: "https://github.com/Onedongua/si-website/tree/main/",
+          editUrl: "https://github.com/chunbosama/si-website/tree/main/",
         },
         blog: {
           showReadingTime: true,
@@ -86,7 +86,7 @@ const config: Config = {
           position: "right",
         },
         {
-          href: "https://github.com/OneDongua/si-website",
+          href: "https://github.com/chunbosama/si-website",
           className: "header-github-link",
           position: "right",
         },
@@ -104,11 +104,7 @@ const config: Config = {
             },
             {
               label: "邮箱",
-              href: "https://mail.si-hzyz.top",
-            },
-            {
-              label: "抽奖器",
-              href: "https://draw.si-hzyz.top",
+              href: "",
             },
           ],
         },
