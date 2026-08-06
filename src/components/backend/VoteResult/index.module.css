@@ -92,30 +92,53 @@
 
 .item {
   position: relative;
-  height: 2.5rem;
+  min-height: 2.5rem;
   margin: 0.5rem 0;
   border: 1px solid var(--ifm-color-success-dark);
   border-radius: 0.5rem;
+  overflow: hidden;
 }
 
 .fill {
   position: absolute;
+  top: 0;
+  left: 0;
   height: 100%;
   border-radius: 0.4rem;
   background-color: var(--ifm-color-success-dark);
 }
 
-.text {
-  position: absolute;
-  left: 0.5rem;
-  top: 50%;
-  transform: translate(0, -50%);
-  color: var(--ifm-button-color);
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  min-height: 2.5rem;
 }
 
-.textOverflow {
+.label {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ifm-button-color);
+  font-size: 0.95rem;
+}
+
+.count {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--ifm-button-color);
+  white-space: nowrap;
+}
+
+.textDark .label,
+.textDark .count {
   color: var(--ifm-font-color-base) !important;
 }
+
 
 /* 投票管理面板 */
 .manage {

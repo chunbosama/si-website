@@ -255,7 +255,7 @@ export default function VoteResult() {
               type="number"
               min="1"
               value={newMax}
-              onChange={(e) => setNewMax(e.target.value)}
+              onChange={(e) => setNewMax(Number(e.target.value))}
             />
             <button
               className={clsx("button button--primary", styles.manageBtn)}
@@ -331,11 +331,14 @@ export default function VoteResult() {
                     />
                     <div
                       className={clsx(
-                        styles.text,
-                        percent <= 0.1 ? styles.textOverflow : null
+                        styles.row,
+                        percent <= 0.2 ? styles.textDark : null
                       )}
                     >
-                      {datas[id].items[index] + ": " + count}
+                      <span className={styles.label}>
+                        {datas[id].items[index]}
+                      </span>
+                      <span className={styles.count}>{count}</span>
                     </div>
                   </div>
                 );
