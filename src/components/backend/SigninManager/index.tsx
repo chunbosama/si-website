@@ -35,6 +35,16 @@ async function getRecords(event: string) {
   return [];
 }
 
+async function getMembers() {
+  try {
+    const resp = await fetch("/api/MemberListHandler?t=" + Date.now());
+    if (resp.ok) {
+      return await resp.json();
+    }
+  } catch (e) {}
+  return [];
+}
+
 export default function SigninManager() {
   const [active, setActive] = useState(false);
   const [curEvent, setCurEvent] = useState("");
@@ -44,6 +54,7 @@ export default function SigninManager() {
   const [subtitle, setSubtitle] = useState("");
   const [subtitleStatus, setSubtitleStatus] = useState(0);
   const [publishStatus, setPublishStatus] = useState(0);
+  const [members, setMembers] = useState<any[]>([]);
 
   const subtitleStatusText = {
     0: "保存副标题",
@@ -90,6 +101,7 @@ export default function SigninManager() {
   };
 
   useEffect(() => {
+    getMembers().then((list) => setMembers(list));
     refresh();
   }, []);
 
@@ -123,6 +135,16 @@ export default function SigninManager() {
     const n = Number(t);
     return new Date(n).toLocaleString();
   };
+
+  // 计算当前查看事件中未签到的人（对比人员名单）
+  const signedNames = new Set((records || []).map((r) => String(r.name).toLowerCase()));
+  const absent = (members || []).filter(
+    (m) => !signedNames.has(String(m.name).toLowerCase())
+  );
+  const absentRate =
+    members.length > 0
+      ? Math.round(((members.length - absent.length) / members.length) * 100)
+      : 0;
 
   return (
     <div className={styles.container}>
@@ -243,6 +265,37 @@ export default function SigninManager() {
           {active ? "暂无签到记录" : "签到已停止，可点「发布签到」开启新一轮"}
         </div>
       )}
+
+      {/* 未签到名单：对比人员名单得出 */}
+      <div className={styles.absentBox}>
+        <div className={styles.absentTitle}>
+          未签到（{absent.length} 人，签到率 {absentRate}%）
+        </div>
+        {members.length === 0 ? (
+          <div className={styles.empty}>
+            人员名单为空，请先在「人员管理」中添加人员
+          </div>
+        ) : absent.length === 0 ? (
+          <div className={styles.empty}>🎉 全员已签到！</div>
+        ) : (
+          <table className={styles.table}>
+            <thead className={styles.tableHead}>
+              <tr className={styles.tableRow}>
+                <th scope="col">序号</th>
+                <th scope="col">名字</th>
+              </tr>
+            </thead>
+            <tbody className={styles.tableBody}>
+              {absent.map((m, i) => (
+                <tr className={styles.tableRow} key={i}>
+                  <th scope="row">{i + 1}</th>
+                  <td>{m.name}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

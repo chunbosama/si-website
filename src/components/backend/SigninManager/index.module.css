@@ -168,3 +168,22 @@
 .uploadButton {
   align-self: flex-start;
 }
+
+/* 未签到名单 */
+.absentBox {
+  width: 100%;
+  max-width: 480px;
+  border: 1px solid var(--ifm-color-danger);
+  border-radius: 0.5rem;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.absentTitle {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ifm-color-danger);
+}
