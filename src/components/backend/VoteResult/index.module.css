@@ -123,14 +123,14 @@
   min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--ifm-button-color);
+  color: var(--ifm-font-color-base);
   font-size: 0.95rem;
 }
 
 .count {
   flex-shrink: 0;
   font-weight: 600;
-  color: var(--ifm-button-color);
+  color: var(--ifm-font-color-base);
   white-space: nowrap;
 }
 
