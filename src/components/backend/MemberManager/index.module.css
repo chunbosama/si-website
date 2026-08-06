@@ -57,12 +57,12 @@
 }
 
 .input {
-  text-align: center;
+  text-align: left;
   font-size: 1rem;
   border: 1px solid #ccc;
   border-radius: 0.25rem;
-  padding: 0.25rem;
-  width: 120px;
+  padding: 0.25rem 0.5rem;
+  width: 180px;
 }
 
 .input:focus {
@@ -74,4 +74,88 @@
 .uploadButton {
   align-self: flex-start;
   margin-top: 0.5rem;
+}
+
+/* 人员名单表格 */
+.listBox {
+  width: 100%;
+  max-width: 860px;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-self: center;
+  margin-top: 1.5rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tableHead {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.tableRow th,
+.tableRow td {
+  border: 1px solid var(--ifm-table-border-color);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.rowSelected {
+  background: var(--ifm-color-primary-contrast-background, #eef4ff);
+}
+
+.batchBar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--ifm-color-danger);
+  border-radius: 0.35rem;
+  color: var(--ifm-color-danger);
+  font-weight: 600;
+}
+
+.smallBtn {
+  border: none;
+}
+
+.addBox {
+  border-top: 1px dashed var(--ifm-table-border-color);
+  padding-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.addLabel {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.textarea {
+  width: 100%;
+  resize: vertical;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+}
+
+.textarea:focus {
+  outline: none;
+  border-width: 2px;
+  border-color: var(--ifm-color-primary);
+}
+
+.addMsg {
+  font-size: 0.95rem;
+  color: var(--ifm-color-primary);
+  font-weight: 600;
 }

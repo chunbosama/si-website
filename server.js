@@ -119,6 +119,74 @@ app.all("/api/MemberConfigHandler", (req, res) => {
   return res.status(400).send("Error: unknown error");
 });
 
+// ==== 人员名单 ====
+function ensureMembers(data) {
+  if (!Array.isArray(data.members)) data.members = [];
+  return data.members;
+}
+function membersToJSON(list) {
+  return list.map((m) => ({
+    name: String((m && m.name) || ""),
+    position: String((m && m.position) || ""),
+    addedAt: Number((m && m.addedAt) || 0),
+  }));
+}
+app.all("/api/MemberListHandler", (req, res) => {
+  const data = loadData();
+  const list = ensureMembers(data);
+  if (req.method === "GET") {
+    return res.json(membersToJSON(list));
+  } else if (req.method === "POST") {
+    const body = parseBody(req.body) || {};
+    // 批量新增：body.names 逗号/换行分隔 或 数组；可带 body.position 作为默认职位
+    let names = [];
+    if (typeof body.names === "string") {
+      names = body.names
+        .split(/[\n,，]+/)
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+    } else if (Array.isArray(body.names)) {
+      names = body.names.map((s) => String(s && s.name !== undefined ? s.name : s).trim()).filter(Boolean);
+    }
+    if (names.length === 0) return res.status(400).send("Error: 名单为空");
+    const defaultPosition = String((body.position || "").trim());
+    const lower = (n) => String(n).toLowerCase();
+    let added = 0;
+    let skipped = 0;
+    for (const n of names) {
+      if (list.some((m) => lower(m.name) === lower(n))) {
+        skipped++;
+        continue;
+      }
+      list.push({ name: n, position: defaultPosition, addedAt: Date.now() });
+      added++;
+    }
+    saveData(data);
+    return res.json({ msg: "Success", added, skipped, total: list.length });
+  } else if (req.method === "DELETE") {
+    const body = parseBody(req.body) || {};
+    let targets = [];
+    if (typeof body.names === "string") {
+      targets = body.names
+        .split(/[\n,，]+/)
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+    } else if (Array.isArray(body.names)) {
+      targets = body.names.map((s) => String(s)).filter(Boolean);
+    } else if (body.name) {
+      targets = [String(body.name).trim()];
+    }
+    if (targets.length === 0) return res.status(400).send("Error: 参数错误");
+    const lower = (n) => String(n).toLowerCase();
+    const lowerTargets = targets.map(lower);
+    const before = list.length;
+    data.members = list.filter((m) => !lowerTargets.includes(lower(m.name)));
+    saveData(data);
+    return res.json({ msg: "Success", removed: before - data.members.length, total: data.members.length });
+  }
+  return res.status(400).send("Error: unknown error");
+});
+
 // ==== 直播链接 ====
 app.all("/api/LiveConfigHandler", (req, res) => {
   const data = loadData();
@@ -191,6 +259,11 @@ app.all("/api/SigninHandler", (req, res) => {
     if (body.name && body.event) {
       if (!data.signin.active || data.signin.activeEvent !== body.event) return res.status(400).send("Error: 签到未开启");
       const list = data.signin.records[body.event] || [];
+      // 校验名字是否在人员名单内
+      const members = ensureMembers(data);
+      const lower = (n) => String(n).toLowerCase();
+      const isMember = members.some((m) => lower(m.name) === lower(String(body.name)));
+      if (!isMember) return res.status(400).send("Error: 您不在人员名单中，无法签到");
       const exists = list.some((r) => r.name === body.name);
       if (exists) return res.status(400).send("Error: 已签到");
       list.push({ name: body.name, time: Date.now() });

@@ -178,6 +178,80 @@ module.exports = function localApiPlugin(context, options) {
               return res.status(400).send("Error: unknown error");
             });
 
+            // 人员名单：GET 读取 / POST 新增(可批量) / DELETE 删除
+            const ensureMembers = (data) => {
+              if (!Array.isArray(data.members)) data.members = [];
+              return data.members;
+            };
+            const membersToJSON = (list) =>
+              list.map((m) => ({
+                name: String((m && m.name) || ""),
+                position: String((m && m.position) || ""),
+                addedAt: Number((m && m.addedAt) || 0),
+              }));
+            router.all("/api/MemberListHandler", (req, res) => {
+              const data = loadData();
+              const list = ensureMembers(data);
+              if (req.method === "GET") {
+                return res.json(membersToJSON(list));
+              } else if (req.method === "POST") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try { body = JSON.parse(body); } catch (e) { body = {}; }
+                }
+                let names = [];
+                if (typeof body.names === "string") {
+                  names = body.names
+                    .split(/[\n,，]+/)
+                    .map((s) => String(s).trim())
+                    .filter(Boolean);
+                } else if (Array.isArray(body.names)) {
+                  names = body.names
+                    .map((s) => String(s && s.name !== undefined ? s.name : s).trim())
+                    .filter(Boolean);
+                }
+                if (names.length === 0) return res.status(400).send("Error: 名单为空");
+                const defaultPosition = String((body.position || "").trim());
+                const lower = (n) => String(n).toLowerCase();
+                let added = 0;
+                let skipped = 0;
+                for (const n of names) {
+                  if (list.some((m) => lower(m.name) === lower(n))) {
+                    skipped++;
+                    continue;
+                  }
+                  list.push({ name: n, position: defaultPosition, addedAt: Date.now() });
+                  added++;
+                }
+                saveData(data);
+                return res.json({ msg: "Success", added, skipped, total: list.length });
+              } else if (req.method === "DELETE") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try { body = JSON.parse(body); } catch (e) { body = {}; }
+                }
+                let targets = [];
+                if (typeof body.names === "string") {
+                  targets = body.names
+                    .split(/[\n,，]+/)
+                    .map((s) => String(s).trim())
+                    .filter(Boolean);
+                } else if (Array.isArray(body.names)) {
+                  targets = body.names.map((s) => String(s)).filter(Boolean);
+                } else if (body.name) {
+                  targets = [String(body.name).trim()];
+                }
+                if (targets.length === 0) return res.status(400).send("Error: 参数错误");
+                const lower = (n) => String(n).toLowerCase();
+                const lowerTargets = targets.map(lower);
+                const before = list.length;
+                data.members = list.filter((m) => !lowerTargets.includes(lower(m.name)));
+                saveData(data);
+                return res.json({ msg: "Success", removed: before - data.members.length, total: data.members.length });
+              }
+              return res.status(400).send("Error: unknown error");
+            });
+
             // 直播链接配置：GET 读取 / POST 保存
             router.all("/api/LiveConfigHandler", (req, res) => {
               const data = loadData();
@@ -292,6 +366,13 @@ module.exports = function localApiPlugin(context, options) {
                     return res.status(400).send("Error: 签到未开启");
                   }
                   const list = data.signin.records[body.event] || [];
+                  // 校验名字是否在人员名单内
+                  const members = ensureMembers(data);
+                  const lower = (n) => String(n).toLowerCase();
+                  const isMember = members.some((m) => lower(m.name) === lower(String(body.name)));
+                  if (!isMember) {
+                    return res.status(400).send("Error: 您不在人员名单中，无法签到");
+                  }
                   // 去重：同一名字只签一次
                   const exists = list.some((r) => r.name === body.name);
                   if (exists) {
