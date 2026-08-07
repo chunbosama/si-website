@@ -70,6 +70,7 @@ const config: Config = {
         { to: "vote", label: "投票", position: "left" },
         { to: "sign_up", label: "报名", position: "left" },
         { to: "check_in", label: "签到", position: "left" },
+        { to: "draw", label: "抽奖", position: "left" },
         { to: "live", label: "直播", position: "left" },
         { to: "qa", label: "Q&A", position: "left" },
         {

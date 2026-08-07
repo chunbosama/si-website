@@ -251,6 +251,117 @@ app.all("/api/MemberListHandler", (req, res) => {
   return res.status(400).send("Error: unknown error");
 });
 
+// ==== 抽奖 ====
+app.all("/api/DrawHandler", (req, res) => {
+  const data = loadData();
+  if (!data.draw) data.draw = { config: [], active: false, participants: [], results: [] };
+  const draw = data.draw;
+  if (!Array.isArray(draw.config)) draw.config = [];
+  if (!Array.isArray(draw.participants)) draw.participants = [];
+  if (!Array.isArray(draw.results)) draw.results = [];
+
+  if (req.method === "GET") {
+    const url = new URL(req.url, "http://localhost");
+    if (url.searchParams.get("get") === "state") {
+      return res.json({
+        active: draw.active,
+        config: draw.config,
+        participants: draw.participants,
+        results: draw.results,
+      });
+    }
+    return res.status(400).json({ msg: "Error: unknown type" });
+  }
+
+  if (req.method !== "POST") {
+    return res.status(400).json({ msg: "Error: unknown error" });
+  }
+
+  const body = parseBody(req.body);
+
+  // 参与抽奖
+  if (body.participate === true && body.name) {
+    if (!draw.active) return res.status(400).send("Error: 抽奖未开放");
+    const name = String(body.name).trim();
+    const members = ensureMembers(data);
+    const lower = (n) => String(n).toLowerCase();
+    // 校验在人员名单内
+    if (!members.some((m) => lower(m.name) === lower(name))) {
+      return res.status(400).send("Error: 您不在人员名单中，无法参与");
+    }
+    // 不能重复抽（本轮已参与过则拒绝）
+    if (draw.participants.some((n) => lower(n) === lower(name))) {
+      return res.status(400).send("Error: 您本轮已参与过，不能重复参与");
+    }
+    draw.participants.push(name);
+    saveData(data);
+    return res.send("Success");
+  }
+
+  // 开放/关闭参与
+  if (body.setActive !== undefined) {
+    draw.active = body.setActive === true;
+    saveData(data);
+    return res.send("Success");
+  }
+
+  // 保存奖项配置
+  if (body.saveConfig !== undefined) {
+    if (!Array.isArray(body.saveConfig)) return res.status(400).send("Error: 参数错误");
+    draw.config = body.saveConfig
+      .map((p) => ({
+        name: String((p && p.name) || "").trim(),
+        count: Math.max(1, Math.floor(Number((p && p.count) || 0))),
+      }))
+      .filter((p) => p.name);
+    saveData(data);
+    return res.send("Success");
+  }
+
+  // 清空参与者
+  if (body.clearParticipants === true) {
+    draw.participants = [];
+    saveData(data);
+    return res.send("Success");
+  }
+
+  // 执行抽奖（从参与者中随机抽取，按奖项数量分配，仅部分人中）
+  if (body.execDraw === true) {
+    const total = draw.config.reduce((s, p) => s + (p.count || 0), 0);
+    if (total <= 0) return res.status(400).send("Error: 未配置奖项");
+    if (draw.participants.length === 0) return res.status(400).send("Error: 暂无可参与抽奖的人");
+    const pool = [...draw.participants];
+    // 洗牌（Fisher-Yates）
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const results = [];
+    let idx = 0;
+    for (const prize of draw.config) {
+      const winners = [];
+      for (let k = 0; k < prize.count && idx < pool.length; k++) {
+        winners.push(pool[idx]);
+        idx++;
+      }
+      results.push({ prize: prize.name, winners });
+    }
+    draw.results = results;
+    saveData(data);
+    return res.json({ msg: "Success", results });
+  }
+
+  // 重置整轮（清空参与者 + 中奖名单）
+  if (body.reset === true) {
+    draw.participants = [];
+    draw.results = [];
+    saveData(data);
+    return res.send("Success");
+  }
+
+  return res.status(400).json({ msg: "Error: unknown error" });
+});
+
 // ==== 直播链接 ====
 app.all("/api/LiveConfigHandler", (req, res) => {
   const data = loadData();

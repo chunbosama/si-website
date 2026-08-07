@@ -13,6 +13,7 @@ import SigninManager from "@site/src/components/backend/SigninManager";
 import LiveManager from "@site/src/components/backend/LiveManager";
 import BlogManager from "@site/src/components/backend/BlogManager";
 import CodeManager from "@site/src/components/backend/CodeManager";
+import LuckyDrawManager from "@site/src/components/backend/LuckyDrawManager";
 
 export default function Backend() {
   const [cookie] = useCookies();
@@ -38,6 +39,7 @@ export default function Backend() {
       <LiveManager key={7} />
       <BlogManager key={8} />
       <CodeManager key={9} />
+      <LuckyDrawManager key={10} />
     </Layout>
   );
 }

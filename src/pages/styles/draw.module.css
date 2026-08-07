@@ -1,0 +1,6 @@
+.background {
+  min-height: 70vh;
+  display: flex;
+  align-items: flex-start;
+  padding: 3rem 1rem;
+}
