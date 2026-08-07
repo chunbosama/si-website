@@ -19,9 +19,14 @@ export default function Signup() {
     start: string;
     end: string;
   }>({ start: "", end: "" });
+  // 数据是否已加载完成（避免文案闪现“报名已截止”）
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    getSignupTime().then(setSignupTime);
+    getSignupTime().then((t) => {
+      setSignupTime(t);
+      setLoaded(true);
+    });
   }, []);
 
   // 根据配置的报名时间判断是否开放
@@ -41,7 +46,8 @@ export default function Signup() {
   return (
     <Layout title="报名">
       <div className={styles.background}>
-        {isClosed && (
+        {/* 数据加载完成后再判断是否截止，避免闪现错误的“已截止”提示 */}
+        {loaded && isClosed && (
           <b className="alert alert--danger shadow--md">❌ 报名已截止</b>
         )}
         <SignUpForm masterSwitch={masterSwitch} autoClear={true} />
