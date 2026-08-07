@@ -18,8 +18,21 @@ function loadData() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
   } catch (e) {
-    return { registerCode: "siai", users: {} };
+    return { registerCodes: ["siai"], users: {} };
   }
+}
+
+// 读取注册码列表（兼容旧的单码 registerCode 字段）
+function getRegisterCodes(data) {
+  if (Array.isArray(data.registerCodes) && data.registerCodes.length > 0) {
+    return data.registerCodes;
+  }
+  // 迁移旧数据：将 registerCode 转为 registerCodes 数组
+  if (data.registerCode) {
+    data.registerCodes = [String(data.registerCode)];
+    return data.registerCodes;
+  }
+  return [];
 }
 function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
@@ -42,11 +55,62 @@ app.use(bodyParser.text({ type: () => true }));
 app.post("/api/RegisterHandler", (req, res) => {
   const body = parseBody(req.body);
   const data = loadData();
-  if (body.code !== data.registerCode) return res.status(400).send("Error: wrong code.");
+  if (!getRegisterCodes(data).includes(String(body.code || ""))) {
+    return res.status(400).send("Error: wrong code.");
+  }
   if (!body.email || !body.password) return res.status(400).send("Error: no request body.");
   data.users[body.email] = body.password;
   saveData(data);
   return res.send("Success");
+});
+
+// ==== 注册码管理 ====
+app.all("/api/CodeHandler", (req, res) => {
+  const data = loadData();
+  getRegisterCodes(data); // 确保 registerCodes 已初始化
+  if (!Array.isArray(data.registerCodes)) data.registerCodes = [];
+
+  const lower = (s) => String(s).toLowerCase().trim();
+
+  if (req.method === "GET") {
+    return res.json({ codes: data.registerCodes });
+  } else if (req.method === "POST") {
+    const body = parseBody(req.body) || {};
+    let input = [];
+    if (typeof body.codes === "string") {
+      input = body.codes.split(/[\n,，\s]+/).map((s) => String(s).trim()).filter(Boolean);
+    } else if (Array.isArray(body.codes)) {
+      input = body.codes.map((s) => String(s).trim()).filter(Boolean);
+    }
+    if (input.length === 0) return res.status(400).json({ msg: "Error: no codes." });
+    let added = 0;
+    let skipped = 0;
+    for (const raw of input) {
+      if (data.registerCodes.some((c) => lower(c) === lower(raw))) {
+        skipped++;
+        continue;
+      }
+      data.registerCodes.push(raw);
+      added++;
+    }
+    saveData(data);
+    return res.json({ msg: "Success", added, skipped, total: data.registerCodes.length });
+  } else if (req.method === "DELETE") {
+    const body = parseBody(req.body) || {};
+    let input = [];
+    if (typeof body.codes === "string") {
+      input = body.codes.split(/[\n,，]/).map((s) => String(s).trim()).filter(Boolean);
+    } else if (Array.isArray(body.codes)) {
+      input = body.codes.map((s) => String(s).trim()).filter(Boolean);
+    }
+    if (input.length === 0) return res.status(400).json({ msg: "Error: no codes." });
+    const targets = input.map(lower);
+    const before = data.registerCodes.length;
+    data.registerCodes = data.registerCodes.filter((c) => !targets.includes(lower(c)));
+    saveData(data);
+    return res.json({ msg: "Success", removed: before - data.registerCodes.length, total: data.registerCodes.length });
+  }
+  return res.status(400).json({ msg: "Error: unknown error" });
 });
 
 // ==== 登录 ====

@@ -15,8 +15,20 @@ function loadData() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
   } catch (e) {
-    return { registerCode: "siai", users: {} };
+    return { registerCodes: ["siai"], users: {} };
   }
+}
+
+// 读取注册码列表（兼容旧的单码 registerCode 字段）
+function getRegisterCodes(data) {
+  if (Array.isArray(data.registerCodes) && data.registerCodes.length > 0) {
+    return data.registerCodes;
+  }
+  if (data.registerCode) {
+    data.registerCodes = [String(data.registerCode)];
+    return data.registerCodes;
+  }
+  return [];
 }
 
 function saveData(data) {
@@ -40,7 +52,6 @@ module.exports = function localApiPlugin(context, options) {
             // 注册接口
             router.post("/api/RegisterHandler", (req, res) => {
               let body = req.body || {};
-              // fetch 默认不设置 Content-Type，body 可能是字符串，手动解析 JSON
               if (typeof body === "string") {
                 try {
                   body = JSON.parse(body);
@@ -49,7 +60,7 @@ module.exports = function localApiPlugin(context, options) {
                 }
               }
               const data = loadData();
-              if (body.code !== data.registerCode) {
+              if (!getRegisterCodes(data).includes(String(body.code || ""))) {
                 return res.status(400).send("Error: wrong code.");
               }
               if (!body.email || !body.password) {
@@ -58,6 +69,60 @@ module.exports = function localApiPlugin(context, options) {
               data.users[body.email] = body.password;
               saveData(data);
               return res.send("Success");
+            });
+
+            // 注册码管理：GET 列出 / POST 添加 / DELETE 删除
+            router.all("/api/CodeHandler", (req, res) => {
+              const data = loadData();
+              getRegisterCodes(data);
+              if (!Array.isArray(data.registerCodes)) data.registerCodes = [];
+              const lower = (s) => String(s).toLowerCase().trim();
+
+              if (req.method === "GET") {
+                return res.json({ codes: data.registerCodes });
+              } else if (req.method === "POST") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try { body = JSON.parse(body); } catch (e) { body = {}; }
+                }
+                let input = [];
+                if (typeof body.codes === "string") {
+                  input = body.codes.split(/[\n,，\s]+/).map((s) => String(s).trim()).filter(Boolean);
+                } else if (Array.isArray(body.codes)) {
+                  input = body.codes.map((s) => String(s).trim()).filter(Boolean);
+                }
+                if (input.length === 0) return res.status(400).json({ msg: "Error: no codes." });
+                let added = 0;
+                let skipped = 0;
+                for (const raw of input) {
+                  if (data.registerCodes.some((c) => lower(c) === lower(raw))) {
+                    skipped++;
+                    continue;
+                  }
+                  data.registerCodes.push(raw);
+                  added++;
+                }
+                saveData(data);
+                return res.json({ msg: "Success", added, skipped, total: data.registerCodes.length });
+              } else if (req.method === "DELETE") {
+                let body = req.body || {};
+                if (typeof body === "string") {
+                  try { body = JSON.parse(body); } catch (e) { body = {}; }
+                }
+                let input = [];
+                if (typeof body.codes === "string") {
+                  input = body.codes.split(/[\n,，]/).map((s) => String(s).trim()).filter(Boolean);
+                } else if (Array.isArray(body.codes)) {
+                  input = body.codes.map((s) => String(s).trim()).filter(Boolean);
+                }
+                if (input.length === 0) return res.status(400).json({ msg: "Error: no codes." });
+                const targets = input.map(lower);
+                const before = data.registerCodes.length;
+                data.registerCodes = data.registerCodes.filter((c) => !targets.includes(lower(c)));
+                saveData(data);
+                return res.json({ msg: "Success", removed: before - data.registerCodes.length, total: data.registerCodes.length });
+              }
+              return res.status(400).json({ msg: "Error: unknown error" });
             });
 
             // 登录接口（返回该用户加密密码，未找到返回空）
