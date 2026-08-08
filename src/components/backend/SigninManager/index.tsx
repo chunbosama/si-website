@@ -83,7 +83,8 @@ export default function SigninManager() {
     const ev = r.event || "";
     setCurEvent(ev);
     // 默认：有进行中看进行中，否则看最近一次
-    if (ev) {
+    // 注意：用 r.active 判断，而不是用 ev（activeEvent 在停止后仍保留，非空）
+    if (r.active && ev) {
       setSelectedEvent(ev);
       await loadRecords(ev);
     } else {
