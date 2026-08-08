@@ -869,6 +869,56 @@ module.exports = function localApiPlugin(context, options) {
                 .json({ msg: "Error: unknown error" });
             });
 
+            // 社团风采（照片墙）
+            const GALLERY_DIR_DEV = "/home/admin/.openclaw/workspace/si-website/local-data/gallery";
+            router.all("/api/GalleryHandler", (req, res) => {
+              const data = loadData();
+              if (!Array.isArray(data.gallery)) data.gallery = [];
+              if (req.method === "GET") {
+                const list = data.gallery.map((g) => ({ id: g.id, url: g.url, caption: g.caption || "", addedAt: g.addedAt || 0 }));
+                return res.json(list);
+              }
+              if (req.method !== "POST") return res.status(400).send("Error: unknown error");
+              let body = req.body || {};
+              if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = {}; } }
+              if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+              if (body.action === "upload") {
+                if (!body.data) return res.status(400).send("Error: 缺少图片数据");
+                const ext = /^[a-zA-Z0-9]{1,5}$/.test(String(body.ext || "")) ? String(body.ext).toLowerCase() : "jpg";
+                const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+                const filename = id + "." + ext;
+                try {
+                  fs.mkdirSync(GALLERY_DIR_DEV, { recursive: true });
+                  const buf = Buffer.from(String(body.data), "base64");
+                  if (buf.length <= 0) return res.status(400).send("Error: 图片数据为空");
+                  if (buf.length > 15 * 1024 * 1024) return res.status(400).send("Error: 图片过大（最大 15MB）");
+                  fs.writeFileSync(path.join(GALLERY_DIR_DEV, filename), buf);
+                } catch (e) {
+                  return res.status(500).send("Error: 保存图片失败");
+                }
+                data.gallery.push({ id, url: "/gallery/" + filename, caption: String(body.caption || "").trim(), addedAt: Date.now() });
+                saveData(data);
+                return res.json({ msg: "Success", id, url: "/gallery/" + filename });
+              }
+              if (body.action === "delete") {
+                const idx = data.gallery.findIndex((g) => g.id === body.id);
+                if (idx < 0) return res.status(400).send("Error: 未找到该照片");
+                const file = path.join(GALLERY_DIR_DEV, path.basename((data.gallery[idx].url || "").replace("/gallery/", "")));
+                try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch (e) {}
+                data.gallery.splice(idx, 1);
+                saveData(data);
+                return res.send("Success");
+              }
+              if (body.action === "update") {
+                const g = data.gallery.find((x) => x.id === body.id);
+                if (!g) return res.status(400).send("Error: 未找到该照片");
+                g.caption = String(body.caption || "").trim();
+                saveData(data);
+                return res.send("Success");
+              }
+              return res.status(400).send("Error: unknown error");
+            });
+
             app.use(router);
             return middlewares;
           },

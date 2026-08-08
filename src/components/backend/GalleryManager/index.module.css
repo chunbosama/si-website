@@ -1,0 +1,168 @@
+.container {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 4rem;
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding: 2rem 1rem;
+  }
+}
+
+.titleBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.configBox {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--ifm-color-emphasis-0);
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.configLabel {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.configRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.smallLabel {
+  font-size: 0.95rem;
+  color: var(--ifm-color-emphasis-700);
+  flex: none;
+}
+
+.input {
+  text-align: left;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  padding: 0.35rem 0.6rem;
+  flex: 1;
+  min-width: 160px;
+}
+
+.input:focus {
+  outline: none;
+  border-width: 2px;
+  border-color: var(--ifm-color-primary);
+}
+
+.fileInput {
+  flex: 1;
+}
+
+.uploadButton {
+  border: none;
+}
+
+.smallBtn {
+  border: none;
+}
+
+.preview {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid var(--ifm-table-border-color);
+}
+
+.preview img {
+  width: 100%;
+  display: block;
+}
+
+.addMsg {
+  font-size: 0.95rem;
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+.addMsgError {
+  color: #d93025;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+.listBox {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.empty {
+  color: var(--ifm-color-emphasis-600);
+  padding: 1.5rem 0;
+  text-align: center;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  width: 100%;
+}
+
+.photoCard {
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--ifm-color-emphasis-0);
+  display: flex;
+  flex-direction: column;
+}
+
+.photoCard img {
+  width: 100%;
+  height: 170px;
+  object-fit: cover;
+  display: block;
+}
+
+.photoOps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem;
+}
+
+.caption {
+  font-size: 0.9rem;
+  color: var(--ifm-color-emphasis-800);
+  word-break: break-all;
+}
+
+.ops {
+  display: flex;
+  gap: 0.4rem;
+}

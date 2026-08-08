@@ -1,0 +1,5 @@
+.background {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: var(--ifm-background-color);
+}

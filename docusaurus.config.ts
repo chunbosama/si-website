@@ -72,6 +72,7 @@ const config: Config = {
         { to: "check_in", label: "签到", position: "left" },
         { to: "draw", label: "抽奖", position: "left" },
         { to: "live", label: "直播", position: "left" },
+        { to: "style", label: "风采", position: "left" },
         { to: "qa", label: "Q&A", position: "left" },
         {
           type: "doc",

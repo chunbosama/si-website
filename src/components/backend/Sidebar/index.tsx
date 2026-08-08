@@ -192,6 +192,20 @@ export default function Sidebar(props: {
               </svg>
               抽奖
             </div>
+            <div
+              className={clsx(styles.item, index === 11 && styles.item__active)}
+              onClick={() => {
+                setIndex(11);
+              }}>
+              <svg
+                height="24px"
+                viewBox="0 -960 960 960"
+                width="24px"
+                fill="#5f6368">
+                <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T880-760v560q0 33-23.5 56.5T800-120H200Zm0-80h560v-560H200v560Zm80-80h400L545-470 440-340l-65-85-95 125Zm0-160h400L545-470 440-340l-65-85-95 125Z" />
+              </svg>
+              风采
+            </div>
           </div>
           <div
             className={styles.logout}

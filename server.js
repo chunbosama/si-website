@@ -84,6 +84,7 @@ function hashPassword(password, email) {
 const BUILD_DIR = path.join(__dirname, "build");
 const BLOG_DIR = path.join(__dirname, "blog");
 const DATA_FILE = path.join(__dirname, "local-data", "users.json");
+const GALLERY_DIR = path.join(__dirname, "local-data", "gallery");
 
 // ---- 本地数据读写（与 local-api.plugin.js 一致）----
 function loadData() {
@@ -121,6 +122,8 @@ function parseBody(body) {
 }
 
 const app = express();
+// 社团风采上传：允许更大的请求体（base64 图片，最大约 15MB → 20MB limit）
+app.use("/api/GalleryHandler", bodyParser.text({ type: () => true, limit: "20mb" }));
 // 限制请求体大小（1MB），防止内存耗尽型 DoS
 app.use(bodyParser.text({ type: () => true, limit: "1mb" }));
 
@@ -835,7 +838,83 @@ app.all("/api/BlogHandler", requireAuth, (req, res) => {
   return res.status(400).send("Error: unknown error");
 });
 
+// ==== 社团风采（照片墙）====
+app.all("/api/GalleryHandler", (req, res) => {
+  const data = loadData();
+  if (!Array.isArray(data.gallery)) data.gallery = [];
+
+  if (req.method === "GET") {
+    // 公开：返回照片元数据列表
+    const list = data.gallery.map((g) => ({
+      id: g.id,
+      url: g.url,
+      caption: g.caption || "",
+      addedAt: g.addedAt || 0,
+    }));
+    return res.json(list);
+  }
+
+  if (req.method !== "POST") {
+    return res.status(400).send("Error: unknown error");
+  }
+  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+
+  const body = parseBody(req.body);
+
+  // 上传照片：{ action: "upload", data: <base64>, ext: "jpg|png...", caption }
+  if (body.action === "upload") {
+    if (!body.data) return res.status(400).send("Error: 缺少图片数据");
+    const ext = /^[a-zA-Z0-9]{1,5}$/.test(String(body.ext || "")) ? String(body.ext).toLowerCase() : "jpg";
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const filename = id + "." + ext;
+    try {
+      fs.mkdirSync(GALLERY_DIR, { recursive: true });
+      const buf = Buffer.from(String(body.data), "base64");
+      if (buf.length <= 0) return res.status(400).send("Error: 图片数据为空");
+      if (buf.length > 15 * 1024 * 1024) return res.status(400).send("Error: 图片过大（最大 15MB）");
+      fs.writeFileSync(path.join(GALLERY_DIR, filename), buf);
+    } catch (e) {
+      return res.status(500).send("Error: 保存图片失败");
+    }
+    data.gallery.push({
+      id,
+      url: "/gallery/" + filename,
+      caption: String(body.caption || "").trim(),
+      addedAt: Date.now(),
+    });
+    saveData(data);
+    return res.json({ msg: "Success", id, url: "/gallery/" + filename });
+  }
+
+  // 删除照片
+  if (body.action === "delete") {
+    const idx = data.gallery.findIndex((g) => g.id === body.id);
+    if (idx < 0) return res.status(400).send("Error: 未找到该照片");
+    const file = path.join(GALLERY_DIR, path.basename((data.gallery[idx].url || "").replace("/gallery/", "")));
+    try {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    } catch (e) {}
+    data.gallery.splice(idx, 1);
+    saveData(data);
+    return res.send("Success");
+  }
+
+  // 编辑说明文字
+  if (body.action === "update") {
+    const g = data.gallery.find((x) => x.id === body.id);
+    if (!g) return res.status(400).send("Error: 未找到该照片");
+    g.caption = String(body.caption || "").trim();
+    saveData(data);
+    return res.send("Success");
+  }
+
+  return res.status(400).send("Error: unknown error");
+});
+
 // ==== 静态文件服务（生产构建 build/）====
+// 社团风采照片目录：运行时上传，独立于 build，重建不丢失
+app.use("/gallery", express.static(GALLERY_DIR));
+
 app.use(express.static(BUILD_DIR));
 
 // SPA/多页回退：未命中的路径返回 index.html（处理直接访问深层路由）
