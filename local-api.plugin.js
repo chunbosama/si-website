@@ -5,11 +5,81 @@
  */
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const express = require("express");
 const bodyParser = require("body-parser");
 
 // 数据文件使用绝对路径，避免 webpack 重写 __dirname 导致的路径错乱
 const DATA_FILE = "/home/admin/.openclaw/workspace/si-website/local-data/users.json";
+
+const SESSION_SECRET =
+  process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+const SESSION_COOKIE = "si_session";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function createSessionToken(email) {
+  const payload = `${email}|${Date.now() + SESSION_TTL_MS}`;
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+  return Buffer.from(payload + "|" + sig).toString("base64url");
+}
+function verifySessionToken(token) {
+  if (!token) return null;
+  let decoded;
+  try {
+    decoded = Buffer.from(token, "base64url").toString("utf-8");
+  } catch (e) {
+    return null;
+  }
+  const parts = decoded.split("|");
+  if (parts.length !== 3) return null;
+  const [email, expiry, sig] = parts;
+  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(`${email}|${expiry}`).digest("hex");
+  const a = Buffer.from(String(sig));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (Number(expiry) < Date.now()) return null;
+  return email;
+}
+function parseCookies(str) {
+  const out = {};
+  String(str || "").split(";").forEach((c) => {
+    const idx = c.indexOf("=");
+    if (idx > 0) out[c.slice(0, idx).trim()] = c.slice(idx + 1).trim();
+  });
+  return out;
+}
+function getSessionEmail(req) {
+  const cookie = parseCookies(req.headers.cookie);
+  if (cookie[SESSION_COOKIE]) {
+    const e = verifySessionToken(cookie[SESSION_COOKIE]);
+    if (e) return e;
+  }
+  const auth = req.headers.authorization || "";
+  if (auth.startsWith("Bearer ")) {
+    const e = verifySessionToken(auth.slice(7).trim());
+    if (e) return e;
+  }
+  return null;
+}
+function hashPassword(password, email) {
+  return crypto.createHash("md5").update(String(password) + ":" + String(email)).digest("hex");
+}
+const rateBuckets = {};
+function rateLimit(opts) {
+  const { windowMs = 60000, max = 60 } = opts || {};
+  return (req, res, next) => {
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const b = rateBuckets[ip];
+    if (!b || b.resetAt < now) {
+      rateBuckets[ip] = { count: 1, resetAt: now + windowMs };
+      return next();
+    }
+    b.count += 1;
+    if (b.count > max) return res.status(429).send("Error: 请求过于频繁");
+    next();
+  };
+}
 
 function loadData() {
   try {
@@ -50,7 +120,7 @@ module.exports = function localApiPlugin(context, options) {
             router.use(bodyParser.text({ type: () => true }));
 
             // 注册接口
-            router.post("/api/RegisterHandler", (req, res) => {
+            router.post("/api/RegisterHandler", rateLimit({ windowMs: 60000, max: 10 }), (req, res) => {
               let body = req.body || {};
               if (typeof body === "string") {
                 try {
@@ -66,13 +136,22 @@ module.exports = function localApiPlugin(context, options) {
               if (!body.email || !body.password) {
                 return res.status(400).send("Error: no request body.");
               }
-              data.users[body.email] = body.password;
+              const email = String(body.email).trim().toLowerCase();
+              if (email === "__proto__" || email === "prototype" || email === "constructor") {
+                return res.status(400).send("Error: invalid email.");
+              }
+              if (data.users[email]) return res.status(400).send("Error: 该邮箱已注册");
+              data.users[email] = hashPassword(body.password, email);
               saveData(data);
+              res.cookie(SESSION_COOKIE, createSessionToken(email), {
+                httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS,
+              });
               return res.send("Success");
             });
 
             // 注册码管理：GET 列出 / POST 添加 / DELETE 删除
             router.all("/api/CodeHandler", (req, res) => {
+              if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
               const data = loadData();
               getRegisterCodes(data);
               if (!Array.isArray(data.registerCodes)) data.registerCodes = [];
@@ -125,8 +204,8 @@ module.exports = function localApiPlugin(context, options) {
               return res.status(400).json({ msg: "Error: unknown error" });
             });
 
-            // 登录接口（返回该用户加密密码，未找到返回空）
-            router.post("/api/LoginHandler", (req, res) => {
+            // 登录接口：服务端校验密码，返回结果而不泄露存储哈希
+            router.post("/api/LoginHandler", rateLimit({ windowMs: 60000, max: 10 }), (req, res) => {
               let body = req.body || {};
               if (typeof body === "string") {
                 try {
@@ -136,10 +215,27 @@ module.exports = function localApiPlugin(context, options) {
                 }
               }
               const data = loadData();
-              if (!body || !body.email) {
+              if (!body || !body.email || !body.password) {
                 return res.status(400).send("Error: no request body.");
               }
-              return res.send(data.users[body.email] || "");
+              const email = String(body.email).trim().toLowerCase();
+              const stored = data.users[email];
+              if (!stored || hashPassword(body.password, email) !== stored) {
+                return res.status(401).send("Error: 账号或密码错误");
+              }
+              res.cookie(SESSION_COOKIE, createSessionToken(email), {
+                httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS,
+              });
+              return res.send("Success");
+            });
+            // 登出 + 会话状态
+            router.post("/api/LogoutHandler", (req, res) => {
+              res.clearCookie(SESSION_COOKIE, { path: "/" });
+              return res.send("Success");
+            });
+            router.get("/api/SessionHandler", (req, res) => {
+              const email = getSessionEmail(req);
+              return res.json({ loggedIn: !!email, email: email || null });
             });
 
             // 报名接口：POST 提交报名 / GET 获取报名列表
@@ -161,8 +257,10 @@ module.exports = function localApiPlugin(context, options) {
                 saveData(data);
                 return res.send("Success");
               } else if (req.method === "GET") {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 return res.json(data.partList || {});
               } else if (req.method === "DELETE") {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 let body = req.body || {};
                 if (typeof body === "string") {
                   try {
@@ -191,6 +289,7 @@ module.exports = function localApiPlugin(context, options) {
                   submitRedirectUrl: data.submitRedirectUrl || "",
                 });
               } else if (req.method === "POST") {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 let body = req.body || {};
                 if (typeof body === "string") {
                   try {
@@ -215,6 +314,7 @@ module.exports = function localApiPlugin(context, options) {
 
             // 社团人数配置：GET 读取 / POST 保存
             router.all("/api/MemberConfigHandler", (req, res) => {
+              if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
               const data = loadData();
               if (req.method === "GET") {
                 return res.json(
@@ -255,6 +355,7 @@ module.exports = function localApiPlugin(context, options) {
                 addedAt: Number((m && m.addedAt) || 0),
               }));
             router.all("/api/MemberListHandler", (req, res) => {
+              if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
               const data = loadData();
               const list = ensureMembers(data);
               if (req.method === "GET") {
@@ -366,15 +467,17 @@ module.exports = function localApiPlugin(context, options) {
                 return res.send("Success");
               }
 
-              // 开放/关闭参与
+              // 开放/关闭参与（需登录）
               if (body.setActive !== undefined) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 draw.active = body.setActive === true;
                 saveData(data);
                 return res.send("Success");
               }
 
-              // 保存奖项配置
+              // 保存奖项配置（需登录）
               if (body.saveConfig !== undefined) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 if (!Array.isArray(body.saveConfig)) return res.status(400).send("Error: 参数错误");
                 draw.config = body.saveConfig
                   .map((p) => ({
@@ -386,15 +489,17 @@ module.exports = function localApiPlugin(context, options) {
                 return res.send("Success");
               }
 
-              // 清空参与者
+              // 清空参与者（需登录）
               if (body.clearParticipants === true) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 draw.participants = [];
                 saveData(data);
                 return res.send("Success");
               }
 
-              // 执行抽奖
+              // 执行抽奖（需登录）
               if (body.execDraw === true) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 const total = draw.config.reduce((s, p) => s + (p.count || 0), 0);
                 if (total <= 0) return res.status(400).send("Error: 未配置奖项");
                 if (draw.participants.length === 0) return res.status(400).send("Error: 暂无可参与抽奖的人");
@@ -418,8 +523,9 @@ module.exports = function localApiPlugin(context, options) {
                 return res.json({ msg: "Success", results });
               }
 
-              // 重置整轮
+              // 重置整轮（需登录）
               if (body.reset === true) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 draw.participants = [];
                 draw.results = [];
                 saveData(data);
@@ -431,6 +537,7 @@ module.exports = function localApiPlugin(context, options) {
 
             // 直播链接配置：GET 读取 / POST 保存
             router.all("/api/LiveConfigHandler", (req, res) => {
+              if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
               const data = loadData();
               if (req.method === "GET") {
                 return res.json({ url: data.liveUrl || "" });
@@ -487,10 +594,12 @@ module.exports = function localApiPlugin(context, options) {
                   });
                 }
                 if (get === "records") {
+                  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                   const event = url.searchParams.get("event");
                   return res.json(data.signin.records[event] || []);
                 }
                 if (get === "events") {
+                  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                   // 返回所有签到事件列表（id + 时间 + 人数），按时间倒序
                   const events = Object.keys(data.signin.records || {}).map(
                     (ev) => ({
@@ -502,7 +611,8 @@ module.exports = function localApiPlugin(context, options) {
                   events.sort((a, b) => b.time - a.time);
                   return res.json(events);
                 }
-                // 缺省返回所有记录
+                // 缺省返回所有记录（需登录）
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 return res.json(data.signin.records || {});
               } else if (req.method === "POST") {
                 let body = req.body || {};
@@ -514,28 +624,31 @@ module.exports = function localApiPlugin(context, options) {
                   }
                 }
 
-                // 设置副标题
+                // 设置副标题（需登录）
                 if (body.setSubtitle !== undefined) {
+                  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                   data.signin.subtitle = String(body.setSubtitle);
                   saveData(data);
                   return res.send("Success");
                 }
-                // 发布签到：开启一个新的签到事件
-                if (body.publish === true) {
-                  const event = String(Date.now());
-                  data.signin.active = true;
-                  data.signin.activeEvent = event;
-                  if (!data.signin.records[event]) {
-                    data.signin.records[event] = [];
+                // 发布/停止签到（需登录）
+                if (body.publish !== undefined) {
+                  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+                  if (body.publish === true) {
+                    const event = String(Date.now());
+                    data.signin.active = true;
+                    data.signin.activeEvent = event;
+                    if (!data.signin.records[event]) {
+                      data.signin.records[event] = [];
+                    }
+                    saveData(data);
+                    return res.json({ msg: "Success", event: event });
                   }
-                  saveData(data);
-                  return res.json({ msg: "Success", event: event });
-                }
-                // 停止签到
-                if (body.publish === false) {
-                  data.signin.active = false;
-                  saveData(data);
-                  return res.send("Success");
+                  if (body.publish === false) {
+                    data.signin.active = false;
+                    saveData(data);
+                    return res.send("Success");
+                  }
                 }
                 // 提交签到：{ name, event }
                 if (body.name && body.event) {
@@ -609,8 +722,9 @@ module.exports = function localApiPlugin(context, options) {
                 // body: { id: [选中的 item 索引], ... }，依次存入记录
                 // 或 body: { _saveDatas: {datas}, _clearRecords: bool }（后台保存投票配置）
                 if (typeof body === "object" && body !== null) {
-                  // 后台保存投票配置
+                  // 后台保存投票配置（需登录）
                   if (body._saveDatas !== undefined) {
+                    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                     data.votes.datas = body._saveDatas || {};
                     if (body._clearRecords === true) {
                       data.votes.records = [];
@@ -653,7 +767,7 @@ module.exports = function localApiPlugin(context, options) {
                 if (!body || typeof body !== "object") {
                   return res.status(400).send("Error: no request body.");
                 }
-                // 提交问题：{ timestamp, data: {question, answer} }
+                // 提交问题：{ timestamp, data: {question, answer} }（公开）
                 if (body.timestamp) {
                   data.qa[String(body.timestamp)] = body.data || {
                     question: "",
@@ -662,8 +776,9 @@ module.exports = function localApiPlugin(context, options) {
                   saveData(data);
                   return res.send("Success");
                 }
-                // 删除：{ delete: timestamp }
+                // 删除：{ delete: timestamp }（需登录）
                 if (body.delete !== undefined) {
+                  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                   delete data.qa[String(body.delete)];
                   saveData(data);
                   return res.send("Success");
@@ -695,17 +810,15 @@ module.exports = function localApiPlugin(context, options) {
                   .status(400)
                   .json({ msg: "Error: no request body" });
               }
-              // 读取
-              if (body.get) {
-                const what = body.get;
-                if (what === "economy") {
-                  return res.json({ economy: data.economy || [] });
-                }
-                if (what === "user") {
-                  const email = body.email;
-                  return res.json(data.users[email] || null);
-                }
+              if (body.get && body.get === "economy") {
+                return res.json({ economy: data.economy || [] }); // 公开只读
               }
+              if (body.get && body.get === "user") {
+                if (!getSessionEmail(req)) return res.status(401).json({ msg: "Error: 未登录或会话已过期" });
+                return res.json(data.users[body.email] || null);
+              }
+              // 写经费：需登录
+              if (!getSessionEmail(req)) return res.status(401).json({ msg: "Error: 未登录或会话已过期" });
               // 保存经费
               if (body.__economy && body.__economy.economy) {
                 data.economy = body.__economy.economy;

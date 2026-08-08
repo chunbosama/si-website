@@ -7,12 +7,12 @@ import { useHistory } from "@docusaurus/router";
 import styles from "./index.module.css";
 
 async function checkAndRegister(email: string, password: string, code: string) {
-  const encryptedPassword = CryptoJS.MD5(password + ":" + email).toString();
+  // 密码哈希由服务端统一计算，前端只传明文
   await fetch("/api/RegisterHandler", {
     method: "POST",
     body: JSON.stringify({
       email: email,
-      password: encryptedPassword,
+      password: password,
       code: code,
     }),
   })

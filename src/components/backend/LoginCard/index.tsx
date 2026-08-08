@@ -8,30 +8,11 @@ import { useHistory, useLocation } from "@docusaurus/router";
 import styles from "./index.module.css";
 
 async function check(email: string, password: string) {
-  let encryptedPassword: string;
-  await fetch("/api/LoginHandler", {
+  const resp = await fetch("/api/LoginHandler", {
     method: "POST",
-    body: JSON.stringify({ email: email }),
-  })
-    .then((response) => {
-      if (response.ok) {
-        return response.text();
-      } else {
-        throw new Error("Network response was not ok");
-      }
-    })
-    .then((data) => {
-      encryptedPassword = data;
-    })
-    .catch((error) => {
-      throw new Error(error);
-    });
-
-  if (!encryptedPassword) throw new Error("未找到用户");
-
-  const mEncryptedPassword = CryptoJS.MD5(password + ":" + email).toString();
-  if (mEncryptedPassword === encryptedPassword) return true;
-
+    body: JSON.stringify({ email: email, password: password }),
+  });
+  if (resp.ok) return true;
   return false;
 }
 export default function Login() {
@@ -109,15 +90,7 @@ export default function Login() {
         onClick={async (e) => {
           setStatus(1);
           try {
-            if (
-              CryptoJS.MD5(email).toString() ===
-              "09867ebea66c3ddb6c6b7768bea147ee"
-            ) {
-              setCookie("email", "admin", { path: "/" });
-              setStatus(2);
-              history.push(jumpto ? jumpto : "/backend");
-              return;
-            }
+            // 服务端校验：移除本地硬编码管理员后门
             if (await check(email, password)) {
               setCookie("email", email, { path: "/" });
               setStatus(2);
@@ -126,7 +99,7 @@ export default function Login() {
               alert("账号或密码错误");
             }
           } catch (error) {
-            alert(error);
+            alert((error as Error).message || "登录失败");
           }
           setStatus(0);
         }}>
