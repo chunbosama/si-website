@@ -10,7 +10,7 @@ async function getState() {
       return await resp.json();
     }
   } catch (e) {}
-  return { active: false, config: [], participants: [], results: [] };
+  return { active: false, config: [], participants: [], results: [], history: [] };
 }
 
 async function apiPost(body: any) {
@@ -38,6 +38,9 @@ export default function LuckyDrawManager() {
   const [results, setResults] = useState<{ prize: string; winners: string[] }[]>(
     []
   );
+  const [history, setHistory] = useState<
+    { time: number; results: { prize: string; winners: string[] }[] }[]
+  >([]);
   const [msg, setMsg] = useState("");
   const [msgError, setMsgError] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,6 +55,7 @@ export default function LuckyDrawManager() {
     setConfig(Array.isArray(s.config) ? s.config : []);
     setParticipants(Array.isArray(s.participants) ? s.participants : []);
     setResults(Array.isArray(s.results) ? s.results : []);
+    setHistory(Array.isArray(s.history) ? s.history : []);
   };
 
   const show = (t: string, err = false) => {
@@ -123,6 +127,78 @@ export default function LuckyDrawManager() {
     const r = await apiPost({ reset: true });
     show(r.ok ? "已重置本轮抽奖" : String(r.data.msg || "操作失败"), !r.ok);
     if (r.ok) await refresh();
+    setBusy(false);
+  };
+
+  // 清空中奖公示历史
+  const clearHistory = async () => {
+    if (!confirm("确定清空全部中奖公示历史吗？此操作不可恢复。")) return;
+    setBusy(true);
+    const r = await apiPost({ clearHistory: true });
+    show(r.ok ? "已清空中奖公示" : String(r.data.msg || "操作失败"), !r.ok);
+    if (r.ok) await refresh();
+    setBusy(false);
+  };
+
+  // 编辑/删除历史公示状态
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editRows, setEditRows] = useState<
+    { prize: string; winners: string }[]
+  >([]);
+
+  const startEdit = (hi: number) => {
+    setEditingIdx(hi);
+    setEditRows(
+      (history[hi].results || []).map((r) => ({
+        prize: r.prize,
+        winners: (r.winners || []).join("、"),
+      }))
+    );
+  };
+
+  const cancelEdit = () => {
+    setEditingIdx(null);
+    setEditRows([]);
+  };
+
+  const addEditRow = () => setEditRows([...editRows, { prize: "", winners: "" }]);
+  const updateEditRow = (i: number, patch: any) =>
+    setEditRows(editRows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const removeEditRow = (i: number) =>
+    setEditRows(editRows.filter((_, idx) => idx !== i));
+
+  // 保存编辑某一轮公示
+  const saveEdit = async (hi: number) => {
+    const valid = editRows
+      .filter((r) => r.prize.trim())
+      .map((r) => ({
+        prize: r.prize.trim(),
+        winners: r.winners
+          .split(/[、,，]+/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      }));
+    if (valid.length === 0) return show("请至少填写一个奖项名称", true);
+    setBusy(true);
+    const r = await apiPost({ updateHistory: hi, results: valid });
+    show(r.ok ? "已保存该轮公示" : String(r.data.msg || "保存失败"), !r.ok);
+    if (r.ok) {
+      cancelEdit();
+      await refresh();
+    }
+    setBusy(false);
+  };
+
+  // 删除某轮历史公示
+  const removeHistory = async (hi: number) => {
+    if (!confirm(`确定删除这一轮历史公示吗？\n${new Date(history[hi].time).toLocaleString()}`)) return;
+    setBusy(true);
+    const r = await apiPost({ deleteHistory: hi });
+    show(r.ok ? "已删除该轮公示" : String(r.data.msg || "操作失败"), !r.ok);
+    if (r.ok) {
+      if (editingIdx === hi) cancelEdit();
+      await refresh();
+    }
     setBusy(false);
   };
 
@@ -252,6 +328,107 @@ export default function LuckyDrawManager() {
             ))
           )}
         </div>
+      </div>
+
+      {/* 中奖公示历史 */}
+      <div className={styles.listBox}>
+        <div className={styles.configRow}>
+          <div className={styles.configLabel}>
+            中奖公示历史（{history.length} 轮）
+          </div>
+          <button
+            className={clsx("button button--sm button--danger", styles.uploadButton)}
+            disabled={busy || history.length === 0}
+            onClick={clearHistory}>
+            清空公示
+          </button>
+        </div>
+        {history.length === 0 ? (
+          <div className={styles.empty}>暂无历史公示</div>
+        ) : (
+          history.map((h, hi) => (
+            <div className={styles.historyRound} key={hi}>
+              <div className={styles.historyRoundHead}>
+                <span className={styles.historyRoundTime}>
+                  {new Date(h.time).toLocaleString()}
+                </span>
+                <div className={styles.historyRoundOps}>
+                  {editingIdx !== hi ? (
+                    <>
+                      <button
+                        className={clsx("button button--sm button--secondary", styles.smallBtn)}
+                        disabled={busy}
+                        onClick={() => startEdit(hi)}>
+                        编辑
+                      </button>
+                      <button
+                        className={clsx("button button--sm button--danger", styles.smallBtn)}
+                        disabled={busy}
+                        onClick={() => removeHistory(hi)}>
+                        删除
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className={clsx("button button--sm button--primary", styles.smallBtn)}
+                        disabled={busy}
+                        onClick={() => saveEdit(hi)}>
+                        保存
+                      </button>
+                      <button
+                        className={clsx("button button--sm", styles.smallBtn)}
+                        disabled={busy}
+                        onClick={cancelEdit}>
+                        取消
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {editingIdx === hi ? (
+                <div className={styles.editBox}>
+                  {editRows.map((row, ri) => (
+                    <div className={styles.configRow} key={ri}>
+                      <input
+                        className={styles.input}
+                        placeholder="奖项名称"
+                        value={row.prize}
+                        onChange={(e) => updateEditRow(ri, { prize: e.target.value })}
+                      />
+                      <input
+                        className={clsx(styles.input, styles.inputWinners)}
+                        placeholder="中奖人，用、分隔"
+                        value={row.winners}
+                        onChange={(e) => updateEditRow(ri, { winners: e.target.value })}
+                      />
+                      <button
+                        className={clsx("button button--sm button--danger", styles.smallBtn)}
+                        onClick={() => removeEditRow(ri)}>
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    className={clsx("button button--sm button--secondary", styles.smallBtn, styles.addRowBtn)}
+                    onClick={addEditRow}>
+                    ＋ 添加奖项行
+                  </button>
+                </div>
+              ) : (
+                (h.results || []).map((r, ri) => (
+                  <div className={styles.resultRow} key={ri}>
+                    <span className={styles.resultPrize}>{r.prize}</span>
+                    <span className={styles.resultWinners}>
+                      {(r.winners || []).join("、") || "—"}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

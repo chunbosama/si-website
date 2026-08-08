@@ -422,12 +422,13 @@ module.exports = function localApiPlugin(context, options) {
             router.all("/api/DrawHandler", (req, res) => {
               const data = loadData();
               if (!data.draw) {
-                data.draw = { config: [], active: false, participants: [], results: [] };
+                data.draw = { config: [], active: false, participants: [], results: [], history: [] };
               }
               const draw = data.draw;
               if (!Array.isArray(draw.config)) draw.config = [];
               if (!Array.isArray(draw.participants)) draw.participants = [];
               if (!Array.isArray(draw.results)) draw.results = [];
+              if (!Array.isArray(draw.history)) draw.history = []; // 中奖公示历史
 
               if (req.method === "GET") {
                 const url = new URL(req.url, "http://localhost");
@@ -437,6 +438,7 @@ module.exports = function localApiPlugin(context, options) {
                     config: draw.config,
                     participants: draw.participants,
                     results: draw.results,
+                    history: draw.history, // 历史中奖公示
                   });
                 }
                 return res.status(400).json({ msg: "Error: unknown type" });
@@ -519,6 +521,9 @@ module.exports = function localApiPlugin(context, options) {
                   results.push({ prize: prize.name, winners });
                 }
                 draw.results = results;
+                // 追加到中奖公示历史（带时间戳）
+                if (!Array.isArray(draw.history)) draw.history = [];
+                draw.history.push({ time: Date.now(), results: results });
                 saveData(data);
                 return res.json({ msg: "Success", results });
               }
@@ -528,6 +533,40 @@ module.exports = function localApiPlugin(context, options) {
                 if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 draw.participants = [];
                 draw.results = [];
+                saveData(data);
+                return res.send("Success");
+              }
+
+              // 清空中奖公示历史（需登录）
+              if (body.clearHistory === true) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+                draw.history = [];
+                saveData(data);
+                return res.send("Success");
+              }
+
+              // 删除某一轮历史公示（需登录）：body.deleteHistory 传 time 或 index
+              if (body.deleteHistory !== undefined) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+                if (!Array.isArray(draw.history)) draw.history = [];
+                const target = body.deleteHistory;
+                const idx = typeof target === "number" && target < draw.history.length ? target : draw.history.findIndex((h) => h.time === Number(target));
+                if (idx < 0) return res.status(400).send("Error: 未找到该轮公示");
+                draw.history.splice(idx, 1);
+                saveData(data);
+                return res.send("Success");
+              }
+
+              // 编辑某一轮历史公示（需登录）：body.updateHistory = index；body.results = 新的奖项列表
+              if (body.updateHistory !== undefined) {
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+                if (!Array.isArray(draw.history)) draw.history = [];
+                const idx = body.updateHistory;
+                if (typeof idx !== "number" || idx >= draw.history.length) return res.status(400).send("Error: 未找到该轮公示");
+                if (!Array.isArray(body.results)) return res.status(400).send("Error: 参数错误");
+                const toWinners = (w) => Array.isArray(w) ? w.map((x) => String(x).trim()).filter(Boolean) : String(w || "").split(/[、,，]+/).map((s) => s.trim()).filter(Boolean);
+                const newResults = body.results.map((r) => ({ prize: String((r && r.prize) || "").trim(), winners: toWinners(r && r.winners) })).filter((r) => r.prize);
+                draw.history[idx].results = newResults;
                 saveData(data);
                 return res.send("Success");
               }

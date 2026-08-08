@@ -163,6 +163,60 @@
   text-align: right;
 }
 
+.historyRound {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem 0.6rem;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  margin-bottom: 0.6rem;
+  background: var(--ifm-color-emphasis-0, #fff);
+}
+
+.historyRoundTime {
+  font-size: 0.8rem;
+  color: var(--ifm-color-emphasis-600);
+  text-align: center;
+  margin-bottom: 0.15rem;
+}
+
+.historyRoundHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.historyRoundTime {
+  flex: 1;
+  text-align: left;
+  margin-bottom: 0;
+}
+
+.historyRoundOps {
+  display: flex;
+  gap: 0.35rem;
+  flex: none;
+}
+
+.editBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+.inputWinners {
+  flex: 2;
+  min-width: 140px;
+}
+
+.addRowBtn {
+  align-self: flex-start;
+  margin-top: 0.1rem;
+}
+
 .addMsg {
   font-size: 0.95rem;
   color: var(--ifm-color-primary);

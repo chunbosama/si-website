@@ -10,7 +10,7 @@ async function getDrawState() {
       return await resp.json();
     }
   } catch (e) {}
-  return { active: false, config: [], participants: [], results: [] };
+  return { active: false, config: [], participants: [], results: [], history: [] };
 }
 
 export default function DrawForm() {
@@ -18,6 +18,7 @@ export default function DrawForm() {
   const [active, setActive] = useState(false);
   const [config, setConfig] = useState([]);
   const [results, setResults] = useState([]);
+  const [history, setHistory] = useState([]);
   const [status, setStatus] = useState(0); // 0=默认 1=提交中 2=成功 3=失败
   const [msg, setMsg] = useState("");
 
@@ -33,6 +34,7 @@ export default function DrawForm() {
       setActive(r.active);
       setConfig(Array.isArray(r.config) ? r.config : []);
       setResults(Array.isArray(r.results) ? r.results : []);
+      setHistory(Array.isArray(r.history) ? r.history : []);
     });
   }, []);
 
@@ -117,6 +119,27 @@ export default function DrawForm() {
               <span className={styles.resultWinners}>
                 {(r.winners || []).join("、") || "—"}
               </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className={styles.announce}>
+          <div className={styles.announceTitle}>🏆 中奖公示（历史）</div>
+          {history.map((h, hi) => (
+            <div className={styles.announceRound} key={hi}>
+              <div className={styles.announceRoundTime}>
+                {new Date(h.time).toLocaleString()}
+              </div>
+              {(h.results || []).map((r, ri) => (
+                <div className={styles.resultRow} key={ri}>
+                  <span className={styles.resultPrize}>{r.prize}</span>
+                  <span className={styles.resultWinners}>
+                    {(r.winners || []).join("、") || "—"}
+                  </span>
+                </div>
+              ))}
             </div>
           ))}
         </div>
