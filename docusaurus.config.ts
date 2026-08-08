@@ -105,7 +105,7 @@ const config: Config = {
             },
             {
               label: "邮箱",
-              href: "https://mail.si-hzyz.top",
+              href: "https://mail.chunbosama.xyz",
             },
           ],
         },
