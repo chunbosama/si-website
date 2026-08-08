@@ -562,12 +562,15 @@ app.all("/api/DrawHandler", (req, res) => {
   return res.status(400).json({ msg: "Error: unknown error" });
 });
 
-// ==== 直播链接（需登录）====
-app.all("/api/LiveConfigHandler", requireAuth, (req, res) => {
+// ==== 直播链接（读取公开，保存需登录）====
+app.all("/api/LiveConfigHandler", (req, res) => {
   const data = loadData();
   if (req.method === "GET") {
+    // 公开读取：直播页/导航栏都是游客访问
     return res.json({ url: data.liveUrl || "" });
   } else if (req.method === "POST") {
+    // 保存链接：需登录
+    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
     const body = parseBody(req.body);
     data.liveUrl = body.url || "";
     saveData(data);

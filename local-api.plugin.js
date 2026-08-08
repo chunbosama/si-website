@@ -576,11 +576,13 @@ module.exports = function localApiPlugin(context, options) {
 
             // 直播链接配置：GET 读取 / POST 保存
             router.all("/api/LiveConfigHandler", (req, res) => {
-              if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
               const data = loadData();
               if (req.method === "GET") {
+                // 公开读取：直播页/导航栏都是游客访问
                 return res.json({ url: data.liveUrl || "" });
               } else if (req.method === "POST") {
+                // 保存链接：需登录
+                if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
                 let body = req.body || {};
                 if (typeof body === "string") {
                   try {
