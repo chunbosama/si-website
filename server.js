@@ -77,6 +77,102 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// ---------- 用户角色系统（普通 user / 管理员 admin / 超级管理员 super）----------
+// 角色权重：user=0 < admin=10 < super=20
+const ROLES = { user: 0, admin: 10, super: 20 };
+const ROLE_NAMES = { user: "普通用户", admin: "管理员", super: "超级管理员" };
+
+// 单个用户记录规范化：兼容旧的 纯哈希字符串 格式，迁移为 { hash, role, nick, active, createdAt }
+function normalizeUser(email, val) {
+  const lower = String(email).trim().toLowerCase();
+  if (val && typeof val === "object" && typeof val.hash === "string") {
+    return {
+      hash: val.hash,
+      role: ROLES[val.role] !== undefined ? String(val.role) : "user",
+      nick: String(val.nick || "").trim() || lower.split("@")[0] || "",
+      active: val.active === undefined ? true : !!val.active,
+      createdAt: Number(val.createdAt) || Date.now(),
+    };
+  }
+  // 旧格式：值是密码哈希字符串
+  return {
+    hash: typeof val === "string" ? val : "",
+    role: "user",
+    nick: lower.split("@")[0] || "",
+    active: true,
+    createdAt: Date.now(),
+  };
+}
+
+// 返回用户展示字段（不含哈希）
+function userToJSON(email, u) {
+  return {
+    email: String(email).trim().toLowerCase(),
+    role: u.role || "user",
+    roleName: ROLE_NAMES[u.role] || "普通用户",
+    nick: String(u.nick || ""),
+    active: u.active === undefined ? true : !!u.active,
+    createdAt: Number(u.createdAt) || 0,
+  };
+}
+
+// 触发一次全量用户数据迁移（把旧字符串格式升级为对象格式）
+function migrateUsers(data) {
+  if (!data.users || typeof data.users !== "object") data.users = {};
+  let changed = false;
+  for (const email of Object.keys(data.users)) {
+    const old = data.users[email];
+    if (old && typeof old === "object" && typeof old.hash === "string") continue;
+    data.users[email] = normalizeUser(email, old);
+    changed = true;
+  }
+  if (changed) saveData(data);
+  return data.users;
+}
+
+function getRole(data, email) {
+  if (!email) return "user";
+  const u = data.users[String(email).trim().toLowerCase()];
+  if (!u) return "user";
+  return ROLES[u.role] !== undefined ? String(u.role) : "user";
+}
+
+// 角色权限是否满足最低要求：minRole 可为 "user"/"admin"/"super"
+function roleAtLeast(role, minRole) {
+  return (ROLES[role] || 0) >= (ROLES[minRole] || 0);
+}
+
+// 当前请求用户角色
+function getReqRole(req) {
+  const data = loadData();
+  return { email: getSessionEmail(req) || req.authEmail || null, data };
+}
+
+// 角色校验中间件：仅登录 + 至少 minRole
+function requireRole(minRole) {
+  return (req, res, next) => {
+    const email = getSessionEmail(req);
+    if (!email) return res.status(401).send("Error: 未登录或会话已过期");
+    const data = loadData();
+    const role = getRole(data, email);
+    if (!roleAtLeast(role, minRole)) {
+      return res.status(403).send("Error: 权限不足（需 " + ROLE_NAMES[minRole] + "）");
+    }
+    req.authEmail = email;
+    req.authRole = role;
+    next();
+  };
+}
+
+// 便捷：请求中的邮箱是否为指定角色
+function reqRoleAtLeast(req, minRole) {
+  if (req.authRole) return roleAtLeast(String(req.authRole), minRole);
+  const email = getSessionEmail(req);
+  if (!email) return false;
+  const data = loadData();
+  return roleAtLeast(getRole(data, email), minRole);
+}
+
 // 密码哈希（与历史兼容：注册/存储统一为 MD5(password:email)，验证时同样计算再比较）
 function hashPassword(password, email) {
   return crypto.createHash("md5").update(String(password) + ":" + String(email)).digest("hex");
@@ -85,6 +181,8 @@ const BUILD_DIR = path.join(__dirname, "build");
 const BLOG_DIR = path.join(__dirname, "blog");
 const DATA_FILE = path.join(__dirname, "local-data", "users.json");
 const GALLERY_DIR = path.join(__dirname, "local-data", "gallery");
+// 初始超级管理员邮箱（首个超管，可在用户管理中调整）
+const SUPER_ADMIN_EMAIL = "zzr_siai@163.com";
 
 // ---- 本地数据读写（与 local-api.plugin.js 一致）----
 function loadData() {
@@ -175,7 +273,14 @@ app.post("/api/RegisterHandler", (req, res) => {
     return res.status(400).send("Error: invalid email.");
   }
   if (data.users[email]) return res.status(400).send("Error: 该邮箱已注册");
-  data.users[email] = hashPassword(body.password, email);
+  migrateUsers(data); // 确保已有用户迁移为对象格式
+  data.users[email] = {
+    hash: hashPassword(body.password, email),
+    role: "user",
+    nick: email.split("@")[0] || "",
+    active: true,
+    createdAt: Date.now(),
+  };
   saveData(data);
   // 设置会话，注册后自动登录
   res.cookie(SESSION_COOKIE, createSessionToken(email), {
@@ -184,8 +289,8 @@ app.post("/api/RegisterHandler", (req, res) => {
   return res.send("Success");
 });
 
-// ==== 注册码管理（需登录）====
-app.all("/api/CodeHandler", requireAuth, (req, res) => {
+// ==== 注册码管理（列表需登录，增删需管理员）====
+app.all("/api/CodeHandler", (req, res) => {
   const data = loadData();
   getRegisterCodes(data); // 确保 registerCodes 已初始化
   if (!Array.isArray(data.registerCodes)) data.registerCodes = [];
@@ -193,8 +298,10 @@ app.all("/api/CodeHandler", requireAuth, (req, res) => {
   const lower = (s) => String(s).toLowerCase().trim();
 
   if (req.method === "GET") {
+    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
     return res.json({ codes: data.registerCodes });
-  } else if (req.method === "POST") {
+  } else if (req.method === "POST") { // 新增注册码：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body) || {};
     let input = [];
     if (typeof body.codes === "string") {
@@ -215,7 +322,8 @@ app.all("/api/CodeHandler", requireAuth, (req, res) => {
     }
     saveData(data);
     return res.json({ msg: "Success", added, skipped, total: data.registerCodes.length });
-  } else if (req.method === "DELETE") {
+  } else if (req.method === "DELETE") { // 删除注册码：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body) || {};
     let input = [];
     if (typeof body.codes === "string") {
@@ -239,10 +347,17 @@ app.post("/api/LoginHandler", (req, res) => {
   if (!body || !body.email || !body.password) return res.status(400).send("Error: no request body.");
   const data = loadData();
   const email = String(body.email).trim().toLowerCase();
+  // 登录前迁移该用户（兼容旧字符串哈希格式）
+  if (data.users[email] && typeof data.users[email] !== "object") {
+    data.users[email] = normalizeUser(email, data.users[email]);
+    saveData(data);
+  }
   const stored = data.users[email];
   if (!stored) return res.status(401).send("Error: 账号或密码错误");
+  // 停用账号禁止登录
+  if (stored.active === false) return res.status(401).send("Error: 账号已被停用");
   // 服务端校验密码，不再返回存储的哈希
-  const ok = hashPassword(body.password, email) === stored;
+  const ok = (typeof stored === "object" ? stored.hash : stored) === hashPassword(body.password, email);
   if (!ok) return res.status(401).send("Error: 账号或密码错误");
   res.cookie(SESSION_COOKIE, createSessionToken(email), {
     httpOnly: true, sameSite: "lax", secure: false, path: "/", maxAge: SESSION_TTL_MS,
@@ -259,7 +374,10 @@ app.post("/api/LogoutHandler", (req, res) => {
 // ==== 当前会话 ====
 app.get("/api/SessionHandler", (req, res) => {
   const email = getSessionEmail(req);
-  return res.json({ loggedIn: !!email, email: email || null });
+  if (!email) return res.json({ loggedIn: false, email: null, role: null });
+  const data = loadData();
+  const role = getRole(data, email);
+  return res.json({ loggedIn: true, email, role });
 });
 
 // ==== 报名 ====
@@ -274,8 +392,8 @@ app.all("/api/SignUpHandler", (req, res) => {
   } else if (req.method === "GET") { // 报名列表：需登录
     if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
     return res.json(data.partList || {});
-  } else if (req.method === "DELETE") { // 删除报名：需登录
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+  } else if (req.method === "DELETE") { // 删除报名：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
     if (body.timestamp && data.partList[String(body.timestamp)]) {
       delete data.partList[String(body.timestamp)];
@@ -296,8 +414,8 @@ app.all("/api/SignUpConfigHandler", (req, res) => {
       end: (data.signupTime && data.signupTime.end) || "",
       submitRedirectUrl: data.submitRedirectUrl || "",
     });
-  } else if (req.method === "POST") { // 报名时间/跳转链接：需登录
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+  } else if (req.method === "POST") { // 报名时间/跳转链接：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
     const cur = data.signupTime || { start: "", end: "" };
     if (body.start !== undefined) cur.start = body.start || "";
@@ -317,8 +435,8 @@ app.all("/api/MemberConfigHandler", (req, res) => {
     // 公开读取：主页社团人数为游客展示，不能要求登录
     return res.json(data.memberCount || { newbie: 0, management: 0 });
   } else if (req.method === "POST") {
-    // 保存人数：需登录（后台 MemberManager 使用）
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    // 保存人数：需管理员（后台 MemberManager 使用）
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
     data.memberCount = {
       newbie: Number.isFinite(Number(body.newbie)) ? Number(body.newbie) : 0,
@@ -342,12 +460,15 @@ function membersToJSON(list) {
     addedAt: Number((m && m.addedAt) || 0),
   }));
 }
-app.all("/api/MemberListHandler", requireAuth, (req, res) => {
+app.all("/api/MemberListHandler", (req, res) => {
   const data = loadData();
   const list = ensureMembers(data);
   if (req.method === "GET") {
+    // 名单读取：需登录（普通用户可查看，后台签到/人员页使用）
+    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
     return res.json(membersToJSON(list));
-  } else if (req.method === "POST") {
+  } else if (req.method === "POST") { // 新增人员：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body) || {};
     // 批量新增：body.names 逗号/换行分隔 或 数组；可带 body.position 作为默认职位
     let names = [];
@@ -374,7 +495,8 @@ app.all("/api/MemberListHandler", requireAuth, (req, res) => {
     }
     saveData(data);
     return res.json({ msg: "Success", added, skipped, total: list.length });
-  } else if (req.method === "DELETE") {
+  } else if (req.method === "DELETE") { // 删除人员：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body) || {};
     let targets = [];
     if (typeof body.names === "string") {
@@ -449,7 +571,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 开放/关闭参与（管理）
   if (body.setActive !== undefined) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     draw.active = body.setActive === true;
     saveData(data);
     return res.send("Success");
@@ -457,7 +579,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 保存奖项配置（管理）
   if (body.saveConfig !== undefined) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     if (!Array.isArray(body.saveConfig)) return res.status(400).send("Error: 参数错误");
     draw.config = body.saveConfig
       .map((p) => ({
@@ -471,7 +593,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 清空参与者（管理）
   if (body.clearParticipants === true) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     draw.participants = [];
     saveData(data);
     return res.send("Success");
@@ -479,7 +601,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 执行抽奖（管理）
   if (body.execDraw === true) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const total = draw.config.reduce((s, p) => s + (p.count || 0), 0);
     if (total <= 0) return res.status(400).send("Error: 未配置奖项");
     if (draw.participants.length === 0) return res.status(400).send("Error: 暂无可参与抽奖的人");
@@ -512,7 +634,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 重置整轮（管理）
   if (body.reset === true) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     draw.participants = [];
     draw.results = [];
     saveData(data);
@@ -521,7 +643,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 清空中奖公示历史（管理）
   if (body.clearHistory === true) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     draw.history = [];
     saveData(data);
     return res.send("Success");
@@ -529,7 +651,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 删除某一轮历史公示（管理）：body.deleteHistory 传该轮的 time 或 index
   if (body.deleteHistory !== undefined) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     if (!Array.isArray(draw.history)) draw.history = [];
     const target = body.deleteHistory;
     const idx = typeof target === "number" && target < draw.history.length ? target : draw.history.findIndex((h) => h.time === Number(target));
@@ -541,7 +663,7 @@ app.all("/api/DrawHandler", (req, res) => {
 
   // 编辑某一轮历史公示（管理）：body.updateHistory 传 index（或 time）+ 新的 results
   if (body.updateHistory !== undefined) {
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     if (!Array.isArray(draw.history)) draw.history = [];
     const index = body.updateHistory;
     const idx = typeof index === "number" && index < draw.history.length ? index : -1;
@@ -572,13 +694,83 @@ app.all("/api/LiveConfigHandler", (req, res) => {
     // 公开读取：直播页/导航栏都是游客访问
     return res.json({ url: data.liveUrl || "" });
   } else if (req.method === "POST") {
-    // 保存链接：需登录
-    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+    // 保存链接：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
     data.liveUrl = body.url || "";
     saveData(data);
     return res.send("Success");
   }
+  return res.status(400).send("Error: unknown error");
+});
+
+// ==== 用户管理（列表需管理员，编辑/删除需超级管理员）====
+// 说明：普通用户无权限；管理员可查看用户列表但不可编辑/删除；超级管理员可全操作
+app.all("/api/UserAdminHandler", (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) return res.status(401).send("Error: 未登录或会话已过期");
+  const data = loadData();
+  migrateUsers(data);
+  const role = getRole(data, email);
+
+  if (req.method === "GET") {
+    // 查看用户列表：需管理员及以上
+    if (!roleAtLeast(role, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
+    const list = Object.keys(data.users).map((e) => userToJSON(e, data.users[e]));
+    list.sort((a, b) => a.createdAt - b.createdAt);
+    return res.json({ users: list, current: email });
+  }
+
+  // 编辑/删除：仅超级管理员
+  if (!roleAtLeast(role, "super")) return res.status(403).send("Error: 权限不足（需超级管理员）");
+  const body = parseBody(req.body) || {};
+
+  if (req.method === "DELETE") {
+    // 删除用户：{ email }
+    const target = String(body.email || "").trim().toLowerCase();
+    if (!target) return res.status(400).send("Error: 缺少邮箱");
+    if (!data.users[target]) return res.status(404).send("Error: 用户不存在");
+    if (target === email) return res.status(400).send("Error: 不能删除当前登录账号");
+    delete data.users[target];
+    saveData(data);
+    return res.send("Success");
+  }
+
+  if (req.method === "POST" || req.method === "PUT") {
+    // 编辑用户：可改 role / nick / active / 重置密码 / 改邮箱
+    const target = String(body.email || "").trim().toLowerCase();
+    if (!target) return res.status(400).send("Error: 缺少邮箱");
+    if (!data.users[target]) return res.status(404).send("Error: 用户不存在");
+
+    // 保护：不能降级/删除唯一超级管理员自身，也不能删掉最后一个超级管理员
+    const targetRole = getRole(data, target);
+    if (String(body.role) === "user" && targetRole === "super" && target === email) {
+      return res.status(400).send("Error: 不能取消自己的超级管理员身份");
+    }
+    const superCount = Object.keys(data.users).filter((e) => getRole(data, e) === "super").length;
+    if (targetRole === "super" && String(body.role) && String(body.role) !== "super" && superCount <= 1) {
+      return res.status(400).send("Error: 至少保留一个超级管理员");
+    }
+
+    const u = data.users[target];
+    if (body.role && ROLES[String(body.role)] !== undefined) u.role = String(body.role);
+    if (body.nick !== undefined) u.nick = String(body.nick).trim();
+    if (body.active !== undefined) u.active = body.active === true || body.active === "true";
+    if (body.password) u.hash = hashPassword(body.password, target);
+
+    // 改邮箱
+    if (body.newEmail) {
+      const ne = String(body.newEmail).trim().toLowerCase();
+      if (ne !== target) {
+        if (data.users[ne]) return res.status(400).send("Error: 新邮箱已被占用");
+        data.users[ne] = u;
+        delete data.users[target];
+      }
+    }
+    saveData(data);
+    return res.json({ msg: "Success" });
+  }
+
   return res.status(400).send("Error: unknown error");
 });
 
@@ -621,9 +813,9 @@ app.all("/api/SigninHandler", (req, res) => {
     return res.status(400).json({ msg: "Error: unknown type" });
   } else if (req.method === "POST") {
     const body = parseBody(req.body);
-    // 以下为管理操作：需登录
+    // 以下为管理操作：需管理员
     if (body.setSubtitle !== undefined || body.publish !== undefined) {
-      if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+      if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     }
     if (body.setSubtitle !== undefined) {
       data.signin.subtitle = String(body.setSubtitle);
@@ -688,8 +880,8 @@ app.all("/api/VoteHandler", (req, res) => {
   } else if (req.method === "POST") {
     const body = parseBody(req.body);
     if (body && typeof body === "object") {
-      if (body._saveDatas !== undefined) { // 管理保存投票配置：需登录
-        if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+      if (body._saveDatas !== undefined) { // 管理保存投票配置：需管理员
+        if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
         data.votes.datas = body._saveDatas || {};
         if (body._clearRecords === true) data.votes.records = [];
         saveData(data);
@@ -720,9 +912,9 @@ app.all("/api/QAHandler", (req, res) => {
       saveData(data);
       return res.send("Success");
     }
-    // 删除问题/答案：需登录
+    // 删除问题/答案：需管理员
     if (body.delete !== undefined) {
-      if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+      if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
       delete data.qa[String(body.delete)];
       saveData(data);
       return res.send("Success");
@@ -741,14 +933,16 @@ app.post("/api/DataHandler", (req, res) => {
   if (!body || typeof body !== "object") return res.status(400).json({ msg: "Error: no request body" });
   if (body.get) {
     if (body.get === "economy") return res.json({ economy: data.economy || [] }); // 公开只读
-    if (body.get === "user") { // 用户数据：需登录
+    if (body.get === "user") { // 用户数据：需登录（不返回密码哈希）
       if (!getSessionEmail(req)) return res.status(401).json({ msg: "Error: 未登录或会话已过期" });
-      return res.json(data.users[body.email] || null);
+      const em = String(body.email || "").trim().toLowerCase();
+      const u = data.users[em] ? normalizeUser(em, data.users[em]) : null;
+      return res.json(u ? userToJSON(em, u) : null);
     }
   }
-  // 写经费：需登录
+  // 写经费：需管理员
   if (body.__economy && body.__economy.economy) {
-    if (!getSessionEmail(req)) return res.status(401).json({ msg: "Error: 未登录或会话已过期" });
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).json({ msg: "Error: 权限不足（需管理员）" });
     data.economy = body.__economy.economy;
     saveData(data);
     return res.json({ msg: "Success" });
@@ -756,9 +950,11 @@ app.post("/api/DataHandler", (req, res) => {
   return res.status(400).json({ msg: "Error: unknown error" });
 });
 
-// ==== 博客（需登录）====
-app.all("/api/BlogHandler", requireAuth, (req, res) => {
+// ==== 博客（读列表需登录，写需管理员）====
+app.all("/api/BlogHandler", (req, res) => {
   if (req.method === "GET") {
+    // 列表/单篇读取：需登录（普通用户可查看）
+    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
     const url = new URL(req.url, "http://localhost");
     const get = url.searchParams.get("get");
     if (get === "list") {
@@ -789,7 +985,8 @@ app.all("/api/BlogHandler", requireAuth, (req, res) => {
       return res.send(fs.readFileSync(fp, "utf-8"));
     }
     return res.status(400).send("Error: unknown type");
-  } else if (req.method === "POST") {
+  } else if (req.method === "POST") { // 删除/保存/重建：需管理员
+    if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
 
     // 删除博客
@@ -863,7 +1060,7 @@ app.all("/api/GalleryHandler", (req, res) => {
   if (req.method !== "POST") {
     return res.status(400).send("Error: unknown error");
   }
-  if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
+  if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
 
   const body = parseBody(req.body);
 
@@ -930,5 +1127,15 @@ app.use((req, res, next) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
+  // 启动时迁移用户数据（旧字符串哈希 -> 对象格式）并确保初始超级管理员存在
+  try {
+    const d = loadData();
+    migrateUsers(d);
+    // 初始超级管理员：若指定邮箱已存在用户，则提升为 super
+    if (d.users[SUPER_ADMIN_EMAIL]) {
+      d.users[SUPER_ADMIN_EMAIL].role = "super";
+      saveData(d);
+    }
+  } catch (e) {}
   console.log(`[生产服务器] 运行于 http://0.0.0.0:${PORT} （静态目录: ${BUILD_DIR}）`);
 });

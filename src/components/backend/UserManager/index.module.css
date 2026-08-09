@@ -1,0 +1,180 @@
+.container {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 4rem;
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding: 2rem 1rem;
+  }
+}
+
+.titleBar {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 700;
+  align-self: flex-start;
+}
+
+.listBox {
+  width: 100%;
+  max-width: 980px;
+  border: 1px solid var(--ifm-table-border-color);
+  border-radius: 0.5rem;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-self: center;
+  margin-top: 1rem;
+}
+
+.configLabel {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.configHint {
+  color: var(--ifm-color-emphasis-600);
+  font-size: 0.95rem;
+  margin-top: 0.25rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tableHead {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.tableRow th,
+.tableRow td {
+  border: 1px solid var(--ifm-table-border-color);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.rowDisabled {
+  opacity: 0.55;
+  background: var(--ifm-color-emphasis-50);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.badgeSuper {
+  background: #fff1f0;
+  color: #cf1322;
+  border: 1px solid #ffa39e;
+}
+
+.badgeAdmin {
+  background: #e6f4ff;
+  color: #0958d9;
+  border: 1px solid #91caff;
+}
+
+.badgeUser {
+  background: #f6ffed;
+  color: #389e0d;
+  border: 1px solid #b7eb8f;
+}
+
+.statusOn {
+  color: #389e0d;
+  font-weight: 600;
+}
+
+.statusOff {
+  color: #cf1322;
+  font-weight: 600;
+}
+
+.smallBtn {
+  border: none;
+  margin-right: 0.35rem;
+}
+
+.input {
+  text-align: left;
+  font-size: 0.95rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  width: 150px;
+}
+
+.input:focus {
+  outline: none;
+  border-width: 2px;
+  border-color: var(--ifm-color-primary);
+}
+
+.select {
+  font-size: 0.95rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.4rem;
+}
+
+.editBox {
+  border: 1px dashed var(--ifm-color-primary);
+  background: var(--ifm-color-primary-contrast-background, #f4f6fb);
+  border-radius: 0.4rem;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rowLabel {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-700);
+  min-width: 52px;
+}
+
+.addMsg {
+  font-size: 0.95rem;
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+.errMsg {
+  font-size: 0.95rem;
+  color: var(--ifm-color-danger);
+  font-weight: 600;
+}
+
+.permissionHint {
+  font-size: 0.9rem;
+  color: var(--ifm-color-emphasis-600);
+  background: var(--ifm-color-emphasis-50);
+  border-radius: 0.35rem;
+  padding: 0.5rem 0.75rem;
+}

@@ -15,6 +15,7 @@ import BlogManager from "@site/src/components/backend/BlogManager";
 import CodeManager from "@site/src/components/backend/CodeManager";
 import LuckyDrawManager from "@site/src/components/backend/LuckyDrawManager";
 import GalleryManager from "@site/src/components/backend/GalleryManager";
+import UserManager from "@site/src/components/backend/UserManager";
 
 export default function Backend() {
   const [cookie] = useCookies();
@@ -42,6 +43,7 @@ export default function Backend() {
       <CodeManager key={9} />
       <LuckyDrawManager key={10} />
       <GalleryManager key={11} />
+      <UserManager key={12} />
     </Layout>
   );
 }

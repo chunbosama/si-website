@@ -64,6 +64,65 @@ function getSessionEmail(req) {
 function hashPassword(password, email) {
   return crypto.createHash("md5").update(String(password) + ":" + String(email)).digest("hex");
 }
+const SUPER_ADMIN_EMAIL = "zzr_siai@163.com";
+const ROLES = { user: 0, admin: 10, super: 20 };
+const ROLE_NAMES = { user: "普通用户", admin: "管理员", super: "超级管理员" };
+function normalizeUser(email, val) {
+  const lower = String(email).trim().toLowerCase();
+  if (val && typeof val === "object" && typeof val.hash === "string") {
+    return {
+      hash: val.hash,
+      role: ROLES[val.role] !== undefined ? String(val.role) : "user",
+      nick: String(val.nick || "").trim() || lower.split("@")[0] || "",
+      active: val.active === undefined ? true : !!val.active,
+      createdAt: Number(val.createdAt) || Date.now(),
+    };
+  }
+  return {
+    hash: typeof val === "string" ? val : "",
+    role: "user",
+    nick: lower.split("@")[0] || "",
+    active: true,
+    createdAt: Date.now(),
+  };
+}
+function userToJSON(email, u) {
+  return {
+    email: String(email).trim().toLowerCase(),
+    role: u.role || "user",
+    roleName: ROLE_NAMES[u.role] || "普通用户",
+    nick: String(u.nick || ""),
+    active: u.active === undefined ? true : !!u.active,
+    createdAt: Number(u.createdAt) || 0,
+  };
+}
+function getRole(data, email) {
+  if (!email) return "user";
+  const u = data.users[String(email).trim().toLowerCase()];
+  if (!u) return "user";
+  return ROLES[u.role] !== undefined ? String(u.role) : "user";
+}
+function roleAtLeast(role, minRole) {
+  return (ROLES[role] || 0) >= (ROLES[minRole] || 0);
+}
+function reqRoleAtLeast(req, minRole) {
+  const email = getSessionEmail(req);
+  if (!email) return false;
+  const data = loadData();
+  return roleAtLeast(getRole(data, email), minRole);
+}
+function migrateUsers(data) {
+  if (!data.users || typeof data.users !== "object") data.users = {};
+  let changed = false;
+  for (const email of Object.keys(data.users)) {
+    const old = data.users[email];
+    if (old && typeof old === "object" && typeof old.hash === "string") continue;
+    data.users[email] = normalizeUser(email, old);
+    changed = true;
+  }
+  if (changed) saveData(data);
+  return data.users;
+}
 const rateBuckets = {};
 function rateLimit(opts) {
   const { windowMs = 60000, max = 60 } = opts || {};
@@ -141,7 +200,14 @@ module.exports = function localApiPlugin(context, options) {
                 return res.status(400).send("Error: invalid email.");
               }
               if (data.users[email]) return res.status(400).send("Error: 该邮箱已注册");
-              data.users[email] = hashPassword(body.password, email);
+              migrateUsers(data);
+              data.users[email] = {
+                hash: hashPassword(body.password, email),
+                role: "user",
+                nick: email.split("@")[0] || "",
+                active: true,
+                createdAt: Date.now(),
+              };
               saveData(data);
               res.cookie(SESSION_COOKIE, createSessionToken(email), {
                 httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS,
@@ -219,8 +285,11 @@ module.exports = function localApiPlugin(context, options) {
                 return res.status(400).send("Error: no request body.");
               }
               const email = String(body.email).trim().toLowerCase();
+              migrateUsers(data); // 兼容旧字符串哈希格式
               const stored = data.users[email];
-              if (!stored || hashPassword(body.password, email) !== stored) {
+              if (!stored) return res.status(401).send("Error: 账号或密码错误");
+              if (stored.active === false) return res.status(401).send("Error: 账号已被停用");
+              if (hashPassword(body.password, email) !== (typeof stored === "object" ? stored.hash : stored)) {
                 return res.status(401).send("Error: 账号或密码错误");
               }
               res.cookie(SESSION_COOKIE, createSessionToken(email), {
@@ -235,7 +304,65 @@ module.exports = function localApiPlugin(context, options) {
             });
             router.get("/api/SessionHandler", (req, res) => {
               const email = getSessionEmail(req);
-              return res.json({ loggedIn: !!email, email: email || null });
+              if (!email) return res.json({ loggedIn: false, email: null, role: null });
+              const data = loadData();
+              return res.json({ loggedIn: true, email, role: getRole(data, email) });
+            });
+
+            // 用户管理（列表需管理员，编辑/删除需超级管理员）
+            router.all("/api/UserAdminHandler", (req, res) => {
+              const email = getSessionEmail(req);
+              if (!email) return res.status(401).send("Error: 未登录或会话已过期");
+              const data = loadData();
+              migrateUsers(data);
+              const role = getRole(data, email);
+              if (req.method === "GET") {
+                if (!roleAtLeast(role, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
+                const list = Object.keys(data.users).map((e) => userToJSON(e, data.users[e]));
+                list.sort((a, b) => a.createdAt - b.createdAt);
+                return res.json({ users: list, current: email });
+              }
+              if (!roleAtLeast(role, "super")) return res.status(403).send("Error: 权限不足（需超级管理员）");
+              let body = req.body || {};
+              if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = {}; } }
+              if (req.method === "DELETE") {
+                const target = String(body.email || "").trim().toLowerCase();
+                if (!target) return res.status(400).send("Error: 缺少邮箱");
+                if (!data.users[target]) return res.status(404).send("Error: 用户不存在");
+                if (target === email) return res.status(400).send("Error: 不能删除当前登录账号");
+                delete data.users[target];
+                saveData(data);
+                return res.send("Success");
+              }
+              if (req.method === "POST" || req.method === "PUT") {
+                const target = String(body.email || "").trim().toLowerCase();
+                if (!target) return res.status(400).send("Error: 缺少邮箱");
+                if (!data.users[target]) return res.status(404).send("Error: 用户不存在");
+                const targetRole = getRole(data, target);
+                if (String(body.role) === "user" && targetRole === "super" && target === email) {
+                  return res.status(400).send("Error: 不能取消自己的超级管理员身份");
+                }
+                const superCount = Object.keys(data.users).filter((e) => getRole(data, e) === "super").length;
+                if (targetRole === "super" && String(body.role) && String(body.role) !== "super" && superCount <= 1) {
+                  return res.status(400).send("Error: 至少保留一个超级管理员");
+                }
+                const u = data.users[target];
+                if (body.role && ROLES[String(body.role)] !== undefined) u.role = String(body.role);
+                if (body.nick !== undefined) u.nick = String(body.nick).trim();
+                if (body.active !== undefined) u.active = body.active === true || body.active === "true";
+                if (body.password) u.hash = hashPassword(body.password, target);
+                if (body.newEmail) {
+                  const ne = String(body.newEmail).trim().toLowerCase();
+                  if (ne !== target) {
+                    if (data.users[ne]) return res.status(400).send("Error: 新邮箱已被占用");
+                    data.users[ne] = u;
+                    delete data.users[target];
+                  }
+                }
+                saveData(data);
+                return res.json({ msg: "Success" });
+              }
+              return res.status(400).send("Error: unknown error");
             });
 
             // 报名接口：POST 提交报名 / GET 获取报名列表
