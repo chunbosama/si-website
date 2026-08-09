@@ -310,12 +310,15 @@ app.all("/api/SignUpConfigHandler", (req, res) => {
   return res.status(400).send("Error: unknown error");
 });
 
-// ==== 社团人数 ====
-app.all("/api/MemberConfigHandler", requireAuth, (req, res) => {
+// ==== 社团人数（读取公开，保存需登录）====
+app.all("/api/MemberConfigHandler", (req, res) => {
   const data = loadData();
   if (req.method === "GET") {
+    // 公开读取：主页社团人数为游客展示，不能要求登录
     return res.json(data.memberCount || { newbie: 0, management: 0 });
   } else if (req.method === "POST") {
+    // 保存人数：需登录（后台 MemberManager 使用）
+    if (!getSessionEmail(req)) return res.status(401).send("Error: 未登录或会话已过期");
     const body = parseBody(req.body);
     data.memberCount = {
       newbie: Number.isFinite(Number(body.newbie)) ? Number(body.newbie) : 0,
