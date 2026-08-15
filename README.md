@@ -98,6 +98,50 @@ docker run -d --name cloudflared --restart=always --network host \
 
 > 💡 **大陆服务器连接 Cloudflare 边缘**：若出站到 `198.41.0.0/16:7844` 的连接被网络干扰导致隧道抖动（`Error 1033`/`502`），可通过 **mihomo 透明代理** 走海外节点中转（见下方「疑难排障」）。
 
+## 🔐 OIDC 单点登录（SSO · 供 OpenList 网盘接入）
+
+官网可作为 **OIDC Identity Provider（身份提供商）**，让外部服务（如 OpenList 网盘）复用官网账号体系实现单点登录（SSO）。
+
+### 启用
+
+在 `server.js` 同级放置 `oidc-provider.js`，并通过环境变量启用：
+
+```ini
+OIDC_ENABLED=1                    # 启用 OIDC Provider
+OIDC_ISSUER=http://<域名/IP>:3000/  # 对外 issuer（需与客户端 sso_endpoint_name 一致）
+SESSION_SECRET=<固定值>            # 建议固定，避免重启后会话失效
+```
+
+> 若未设置 `OIDC_ISSUER`，默认取请求 Host。`server.js` 监听地址已改为双栈（`::`），兼容 IPv6/IPv4。
+
+### 提供的关键端点
+
+| 端点 | 说明 |
+|------|------|
+| `GET /.well-known/openid-configuration` | OIDC Discovery 文档 |
+| `GET /.well-known/jwks.json` | RSA256 公钥 JWKS |
+| `GET /oauth/cert.pem` | X.509 公钥证书（供客户端 `sso_jwt_public_key` 粘贴，RS256 验签） |
+| `GET /oauth/authorize` | 授权端点（复用官网登录态，未登录则跳登录页） |
+| `POST /oauth/token` | 授权码换取 access_token / id_token（RS256 JWT） |
+| `GET /oauth/userinfo` | 用户信息（Bearer token） |
+
+### 对接 OpenList（客户端配置）
+
+在 OpenList 后台 **单点登录（SSO）** 页填写：
+
+- **SSO 登录平台**：`OIDC`
+- **SSO client id**：`openlist`
+- **SSO client secret**：与官网进程启动日志中 `client_secret=` 一致（已持久化到 `local-data/oidc-keys.json`）
+- **SSO endpoint name**：`<OIDC_ISSUER>`（如 `http://8.148.230.19:3000/`）
+- **SSO oidc username key**：`email`（用户名取官网邮箱，也可用 `preferred_username`）
+- **SSO jwt public key**：`http://<域名/IP>:3000/oauth/cert.pem` 返回的整段 PEM 证书
+- **SSO auto register**：开启（官网账号自动注册 OpenList 用户）
+
+### 安全说明
+
+- 密钥与自签证书生成后持久化在 `local-data/oidc-keys.json`（**已加入 `.gitignore`，不提交仓库**）。证书有效期 10 年，私钥切勿泄露。
+- 默认允许任意主机的 `/{path}/api/auth/sso_callback` 回调路径；如需收紧，请修改 `oidc-provider.js` 中的 `DEFAULT_REDIRECTS`。
+
 ## 💾 数据存储
 
 - 所有业务数据保存在 `local-data/users.json`（已加入 `.gitignore`，不提交仓库）。
@@ -137,6 +181,7 @@ docker run -d --name cloudflared --restart=always --network host \
 .
 ├── docusaurus.config.ts      # Docusaurus 配置（导航、主题等）
 ├── server.js                 # 生产服务器（静态 + 全部 /api 接口）
+├── oidc-provider.js          # OIDC 单点登录身份提供商（SSO，供 OpenList 接入）
 ├── local-api.plugin.js       # 开发模式 API 中间件（模拟 server.js）
 ├── package.json
 ├── build/                    # 生产构建产物

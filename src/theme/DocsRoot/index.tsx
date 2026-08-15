@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import React from "react";
+import React, { useEffect } from "react";
 import { useCookies } from "react-cookie";
 
 import renderRoutes from "@docusaurus/renderRoutes";
@@ -31,8 +31,30 @@ function accessDeny() {
 }
 
 export default function DocsRoot(props: Props): JSX.Element {
-  const [cookies, setCookie, removeCookie] = useCookies();
+  const [cookies, , removeCookie] = useCookies();
   const isLogon = cookies.email;
+
+  const history = useHistory();
+
+  // 伪登录防护：本地有 email cookie 但服务端会话已失效时，
+  // 清除本地登录标记并回到登录界面。
+  useEffect(() => {
+    if (!isLogon) return;
+    let cancelled = false;
+    fetch("/api/SessionHandler")
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (d && !d.loggedIn) {
+          removeCookie("email", { path: "/" });
+          history.replace("/backend/login?jumpto=/docs/intro");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isLogon]);
 
   return (
     <HtmlClassNameProvider className={clsx(ThemeClassNames.wrapper.docsPages)}>

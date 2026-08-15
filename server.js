@@ -1114,6 +1114,20 @@ app.all("/api/GalleryHandler", (req, res) => {
   return res.status(400).send("Error: unknown error");
 });
 
+// ==== OIDC Provider（单点登录身份提供商）====
+// 供外部服务（如 OpenList）通过官网账号体系 SSO 登录。
+// 环境变量 OIDC_ENABLED=1 时启用；详情见 oidc-provider.js。
+// 注意：必须在下方 SPA 回退（catch-all）之前注册，否则请求会被 index.html 吞掉。
+try {
+  const oidcProvider = require(path.join(__dirname, "oidc-provider.js"));
+  oidcProvider.register(app, {
+    getSessionEmail, // 复用官网登录态（si_session cookie / Bearer）
+    loadData, // 用户数据读取
+  });
+} catch (e) {
+  console.error("[OIDC] 加载失败:", e && e.message);
+}
+
 // ==== 静态文件服务（生产构建 build/）====
 // 社团风采照片目录：运行时上传，独立于 build，重建不丢失
 app.use("/gallery", express.static(GALLERY_DIR));
@@ -1126,7 +1140,7 @@ app.use((req, res, next) => {
   res.sendFile(path.join(BUILD_DIR, "index.html"));
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "::", () => {
   // 启动时迁移用户数据（旧字符串哈希 -> 对象格式）并确保初始超级管理员存在
   try {
     const d = loadData();
