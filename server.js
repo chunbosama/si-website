@@ -1014,9 +1014,15 @@ app.all("/api/BlogHandler", (req, res) => {
         "---",
         `slug: ${slug}`,
         `title: ${body.title.trim()}`,
+      ];
+      const subtitle = (body.subtitle || "").trim();
+      if (subtitle) {
+        fmLines.push(`description: ${subtitle}`);
+      }
+      fmLines.push(
         "authors:",
         `  - name: ${(body.author || "匿名").trim()}`,
-      ];
+      );
       const avatar = (body.avatar || "").trim();
       if (avatar) {
         fmLines.push(`    image_url: ${avatar}`);
