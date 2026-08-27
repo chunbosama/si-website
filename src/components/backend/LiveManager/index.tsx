@@ -47,7 +47,7 @@ export default function LiveManager() {
           <input
             className={styles.input}
             type="text"
-            placeholder="https://example.com/live"
+            placeholder="https://example.com/live/stream.flv"
             value={url}
             onChange={(e) => {
               setUrl(e.target.value);
@@ -56,7 +56,7 @@ export default function LiveManager() {
           />
         </div>
         <div className={styles.configHint}>
-          保存后，主页导航栏的「直播」标签将跳转到此链接
+          保存后，主页导航栏的「直播」标签将用下方视频控件播放此 FLV 视频流链接
         </div>
         <button
           className={clsx("button button--primary", styles.uploadButton)}

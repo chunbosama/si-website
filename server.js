@@ -688,6 +688,7 @@ app.all("/api/DrawHandler", (req, res) => {
 });
 
 // ==== 直播链接（读取公开，保存需登录）====
+// 说明：该链接为直播页内嵌视频控件播放的 FLV 视频流地址
 app.all("/api/LiveConfigHandler", (req, res) => {
   const data = loadData();
   if (req.method === "GET") {
