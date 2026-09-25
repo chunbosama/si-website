@@ -76,7 +76,6 @@ export default function BlogManager() {
   const [form, setForm] = useState({
     title: "",
     slug: "",
-    subtitle: "",
     author: "",
     avatar: "",
     content: "",
@@ -97,21 +96,19 @@ export default function BlogManager() {
 
   const openNew = () => {
     setEditFile("");
-    setForm({ title: "", slug: "", subtitle: "", author: "", avatar: "", content: "" });
+    setForm({ title: "", slug: "", author: "", avatar: "", content: "" });
     setShowEditor(true);
   };
 
   const openEdit = async (file: string) => {
     const raw = await getBlog(file);
     setEditFile(file);
-    // 从原始 frontmatter 补 title/slug/subtitle/avatar
+    // 从原始 frontmatter 补 title/slug/avatar
     const t = raw.match(/^title:\s*(.+)$/m);
     const s = raw.match(/^slug:\s*(.+)$/m);
-    const d = raw.match(/^description:\s*(.+)$/m);
     setForm({
       title: t ? t[1].trim() : "",
       slug: s ? s[1].trim() : "",
-      subtitle: d ? d[1].trim() : "",
       author: parseAuthor(raw),
       avatar: parseAvatar(raw),
       content: parseContent(raw),
@@ -128,7 +125,6 @@ export default function BlogManager() {
     const data: any = {
       title: form.title,
       slug: form.slug || form.title,
-      subtitle: form.subtitle,
       author: form.author,
       avatar: form.avatar,
       content: form.content,
@@ -195,13 +191,6 @@ export default function BlogManager() {
             placeholder="slug（URL标识，如 my-post，默认用标题）"
             value={form.slug}
             onChange={(e) => setForm({ ...form, slug: e.target.value })}
-          />
-          <input
-            className={styles.input}
-            type="text"
-            placeholder="副标题（可选，显示在标题下方的摘要）"
-            value={form.subtitle}
-            onChange={(e) => setForm({ ...form, subtitle: e.target.value })}
           />
           <input
             className={styles.input}
