@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+# 后台与接口不需要被索引
+Disallow: /backend/
+Disallow: /api/
+
+Sitemap: https://chunbosama.xyz/sitemap.xml

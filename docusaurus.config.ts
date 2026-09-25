@@ -5,14 +5,15 @@ import type * as Preset from "@docusaurus/preset-classic";
 
 const config: Config = {
   // 本地开发中间件插件（注册/登录接口，模拟 Cloudflare KV）
-  plugins: [require.resolve("./local-api.plugin.js")],
+  // 使用相对路径（不使用 require.resolve），避免构建产物中嵌入构建机绝对路径
+  plugins: ["./local-api.plugin.js"],
 
   title: "智能信息社",
   tagline: "你所热爱的，尽在此处",
   favicon: "img/favicon.ico",
 
   // Set the production url of your site here
-  url: "https://si-hzyz.pages.dev",
+  url: "https://chunbosama.xyz",
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: "/",
@@ -53,6 +54,10 @@ const config: Config = {
         },
         theme: {
           customCss: "./src/css/custom.css",
+        },
+        // sitemap 不收录后台管理页（与 robots.txt 的 Disallow: /backend/ 保持一致）
+        sitemap: {
+          ignorePatterns: ["/backend/**", "/backend"],
         },
       } satisfies Preset.Options,
     ],

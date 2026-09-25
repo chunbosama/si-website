@@ -124,18 +124,38 @@ function migrateUsers(data) {
   return data.users;
 }
 const rateBuckets = {};
+// 统一的限速超限响应：保持 JSON 风格 + 告知客户端何时可重试
+function tooManyRequests(res, windowMs) {
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(windowMs / 1000))));
+  return res
+    .status(429)
+    .type("json")
+    .send(JSON.stringify({ msg: "Error: 请求过于频繁，请稍后再试" }));
+}
+// 来源 IP：不再直接采信可伪造的 X-Forwarded-For（改用套接字对端地址）
+function clientIp(req) {
+  return String(req.socket.remoteAddress || "unknown");
+}
+// 统一限速判定（带命名空间，避免不同接口互相挤占额度）
+function allowRate(key, windowMs, max) {
+  const now = Date.now();
+  const b = rateBuckets[key];
+  if (!b || b.resetAt < now) {
+    rateBuckets[key] = { count: 1, resetAt: now + windowMs };
+    return true;
+  }
+  b.count += 1;
+  return b.count <= max;
+}
 function rateLimit(opts) {
-  const { windowMs = 60000, max = 60 } = opts || {};
+  const { windowMs = 60000, max = 60, name = "generic", globalMax = 0 } = opts || {};
   return (req, res, next) => {
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-    const now = Date.now();
-    const b = rateBuckets[ip];
-    if (!b || b.resetAt < now) {
-      rateBuckets[ip] = { count: 1, resetAt: now + windowMs };
-      return next();
+    if (globalMax > 0 && !allowRate("global:" + name, windowMs, globalMax)) {
+      return tooManyRequests(res, windowMs);
     }
-    b.count += 1;
-    if (b.count > max) return res.status(429).send("Error: 请求过于频繁");
+    if (!allowRate(name + ":" + clientIp(req), windowMs, max)) {
+      return tooManyRequests(res, windowMs);
+    }
     next();
   };
 }
@@ -179,7 +199,7 @@ module.exports = function localApiPlugin(context, options) {
             router.use(bodyParser.text({ type: () => true }));
 
             // 注册接口
-            router.post("/api/RegisterHandler", rateLimit({ windowMs: 60000, max: 10 }), (req, res) => {
+            router.post("/api/RegisterHandler", rateLimit({ windowMs: 60000, max: 10, name: "register", globalMax: 120 }), (req, res) => {
               let body = req.body || {};
               if (typeof body === "string") {
                 try {
@@ -271,7 +291,7 @@ module.exports = function localApiPlugin(context, options) {
             });
 
             // 登录接口：服务端校验密码，返回结果而不泄露存储哈希
-            router.post("/api/LoginHandler", rateLimit({ windowMs: 60000, max: 10 }), (req, res) => {
+            router.post("/api/LoginHandler", rateLimit({ windowMs: 60000, max: 10, name: "login", globalMax: 200 }), (req, res) => {
               let body = req.body || {};
               if (typeof body === "string") {
                 try {
@@ -369,6 +389,10 @@ module.exports = function localApiPlugin(context, options) {
             router.all("/api/SignUpHandler", (req, res) => {
               const data = loadData();
               if (req.method === "POST") {
+                // 限速：单 IP 每分钟 5 次 + 全局兜底
+                if (!allowRate("signup:global", 60000, 60)) return tooManyRequests(res, 60000);
+                if (!allowRate("signup:" + clientIp(req), 60000, 5)) return tooManyRequests(res, 60000);
+
                 let body = req.body || {};
                 if (typeof body === "string") {
                   try {
@@ -377,10 +401,60 @@ module.exports = function localApiPlugin(context, options) {
                     body = {};
                   }
                 }
-                if (!body || body.timestamp === undefined || !body.data) {
+                if (!body || typeof body !== "object" || !body.data) {
                   return res.status(400).send("Error: no request body.");
                 }
-                data.partList[String(body.timestamp)] = body.data;
+
+                // 1) 服务端强制校验报名时间窗（前端禁用表单只是障眼法）
+                const win = data.signupTime || {};
+                const nowTs = Date.now();
+                const startTs = win.start ? Date.parse(win.start) : NaN;
+                const endTs = win.end ? Date.parse(win.end) : NaN;
+                if (Number.isFinite(startTs) && nowTs < startTs)
+                  return res.status(400).send("Error: 报名尚未开始");
+                if (Number.isFinite(endTs) && nowTs > endTs)
+                  return res.status(400).send("Error: 报名已截止");
+
+                // 2) 字段校验（必填/长度/格式）
+                const raw = typeof body.data === "object" ? body.data : {};
+                const name = String(raw.name === undefined ? "" : raw.name).trim();
+                const classes = String(raw.classes === undefined ? "" : raw.classes).trim();
+                const email = String(raw.email === undefined ? "" : raw.email).trim().toLowerCase();
+                const phone = String(raw.phone === undefined ? "" : raw.phone).trim();
+                if (!name || name.length > 20) return res.status(400).send("Error: 姓名不合法（1-20 字）");
+                if (!classes || classes.length > 30) return res.status(400).send("Error: 班级不合法（1-30 字）");
+                if (!(email.length <= 60 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)))
+                  return res.status(400).send("Error: 邮箱格式不正确");
+                if (!/^1[3-9]\d{9}$/.test(phone))
+                  return res.status(400).send("Error: 手机号格式不正确");
+
+                // 3) 键校验：不可覆盖已有条目
+                const tkey = String(body.timestamp === undefined ? "" : body.timestamp);
+                if (!/^\d{1,16}$/.test(tkey)) return res.status(400).send("Error: 参数错误");
+                if (!data.partList || typeof data.partList !== "object") data.partList = {};
+                if (data.partList[tkey]) return res.status(400).send("Error: 请勿重复提交");
+
+                // 4) 去重：同一邮箱或手机号只能报名一次
+                const dup = Object.keys(data.partList).some((k) => {
+                  const v = data.partList[k];
+                  if (!v || typeof v !== "object") return false;
+                  return (
+                    String(v.email || "").trim().toLowerCase() === email ||
+                    String(v.phone || "").trim() === phone
+                  );
+                });
+                if (dup) return res.status(400).send("Error: 该邮箱或手机号已报名，请勿重复提交");
+
+                // 5) 总量上限
+                if (Object.keys(data.partList).length >= 2000)
+                  return tooManyRequests(res, 60000);
+
+                data.partList[tkey] = {
+                  name: name,
+                  classes: classes,
+                  email: email,
+                  phone: phone,
+                };
                 saveData(data);
                 return res.send("Success");
               } else if (req.method === "GET") {
@@ -396,7 +470,7 @@ module.exports = function localApiPlugin(context, options) {
                     body = {};
                   }
                 }
-                if (body.timestamp && data.partList[String(body.timestamp)]) {
+                if (body.timestamp && data.partList && data.partList[String(body.timestamp)]) {
                   delete data.partList[String(body.timestamp)];
                   saveData(data);
                   return res.send("Success");
@@ -901,11 +975,60 @@ module.exports = function localApiPlugin(context, options) {
                     return res.send("Success");
                   }
                   if (!data.votes.records) data.votes.records = [];
+                  // 投票提交：单 IP 限速 + 全局兜底
+                  if (!allowRate("vote:global", 60000, 300)) return tooManyRequests(res, 60000);
+                  if (!allowRate("vote:" + clientIp(req), 60000, 20)) return tooManyRequests(res, 60000);
+
+                  // 严格校验：投票 ID 必须存在；选项必须合法、去重且不超过 max
+                  const datas = data.votes.datas || {};
+                  const chosen = [];
                   for (const id of Object.keys(body)) {
+                    const cfg = datas[String(id)];
+                    if (!cfg || typeof cfg !== "object") {
+                      return res.status(400).send("Error: 投票不存在");
+                    }
+                    const rawItems = body[id];
+                    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+                      return res.status(400).send("Error: 请选择投票选项");
+                    }
+                    const maxSel = Number(cfg.max) > 0 ? Math.floor(Number(cfg.max)) : 1;
+                    const options = cfg.items && typeof cfg.items === "object" ? cfg.items : {};
+                    const items = [];
+                    for (const it of rawItems) {
+                      const key = String(it);
+                      if (!Object.prototype.hasOwnProperty.call(options, key)) {
+                        return res.status(400).send("Error: 选项不存在");
+                      }
+                      if (!items.includes(key)) items.push(key);
+                    }
+                    if (items.length > maxSel) {
+                      return res.status(400).send("Error: 最多只能选择 " + maxSel + " 项");
+                    }
+                    chosen.push({ id: String(id), items: items });
+                  }
+                  if (chosen.length === 0) return res.status(400).send("Error: 参数错误");
+
+                  // 服务端防重复：身份由服务端基于 IP+UA 派生，客户端无法自称新身份
+                  const voter = crypto
+                    .createHmac("sha256", SESSION_SECRET)
+                    .update("voter:" + clientIp(req) + "|" + String(req.headers["user-agent"] || "").slice(0, 300))
+                    .digest("hex")
+                    .slice(0, 32);
+                  const votedIds = new Set(
+                    (data.votes.records || []).filter((r) => r && r.voter === voter).map((r) => String(r.id))
+                  );
+                  if (chosen.some((c) => votedIds.has(c.id))) {
+                    return res.status(400).send("Error: 您已经投过票了");
+                  }
+                  if (data.votes.records.length >= 20000) {
+                    return tooManyRequests(res, 60000);
+                  }
+                  for (const c of chosen) {
                     data.votes.records.push({
-                      id: id,
-                      items: Array.isArray(body[id]) ? body[id] : [],
+                      id: c.id,
+                      items: c.items,
                       time: Date.now(),
+                      voter: voter,
                     });
                   }
                   saveData(data);
@@ -935,12 +1058,21 @@ module.exports = function localApiPlugin(context, options) {
                 if (!body || typeof body !== "object") {
                   return res.status(400).send("Error: no request body.");
                 }
-                // 提交问题：{ timestamp, data: {question, answer} }（公开）
+                // 提交问题：{ timestamp, data: {question} }（公开）
+                // 安全：键由服务端生成（不可覆盖已有条目）+ 长度上限 + 限速
                 if (body.timestamp) {
-                  data.qa[String(body.timestamp)] = body.data || {
-                    question: "",
-                    answer: "",
-                  };
+                  if (!allowRate("qa:global", 60000, 60)) return tooManyRequests(res, 60000);
+                  if (!allowRate("qa:" + clientIp(req), 60000, 5)) return tooManyRequests(res, 60000);
+                  const raw = body.data && typeof body.data === "object" ? body.data : {};
+                  const question = String(raw.question || "")
+                    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+                    .trim();
+                  if (!question) return res.status(400).send("Error: 问题内容不能为空");
+                  if (question.length > 200) return res.status(400).send("Error: 问题过长（最多 200 字）");
+                  if (Object.keys(data.qa).length >= 1000) return tooManyRequests(res, 60000);
+                  let key = Date.now();
+                  while (data.qa[String(key)]) key += 1;
+                  data.qa[String(key)] = { question: question, answer: "", createdAt: Date.now() };
                   saveData(data);
                   return res.send("Success");
                 }
@@ -983,7 +1115,9 @@ module.exports = function localApiPlugin(context, options) {
               }
               if (body.get && body.get === "user") {
                 if (!getSessionEmail(req)) return res.status(401).json({ msg: "Error: 未登录或会话已过期" });
-                return res.json(data.users[body.email] || null);
+                const em = String(body.email || "").trim().toLowerCase();
+                const u = data.users[em] ? normalizeUser(em, data.users[em]) : null;
+                return res.json(u ? userToJSON(em, u) : null);
               }
               // 写经费：需登录
               if (!getSessionEmail(req)) return res.status(401).json({ msg: "Error: 未登录或会话已过期" });

@@ -4,6 +4,7 @@
  */
 const path = require("path");
 const fs = require("fs");
+const net = require("net");
 const crypto = require("crypto");
 const { execSync } = require("child_process");
 const express = require("express");
@@ -67,6 +68,20 @@ function parseCookies(str) {
     if (idx > 0) out[c.slice(0, idx).trim()] = c.slice(idx + 1).trim();
   });
   return out;
+}
+
+// 匿名投票者标识（仅用于服务端防重复投票，与登录身份无关）
+// 安全设计：**不再采信客户端自报的 si_voter Cookie**。
+// 旧实现把客户端提交的 Cookie 值当作身份，攻击者只要换一个随机值就能重复投票。
+// 现改为服务端基于「来源 IP + User-Agent」派生（HMAC），客户端无法自称新身份。
+const VOTER_COOKIE = "si_voter";
+function voterId(req) {
+  const ua = String(req.headers["user-agent"] || "").slice(0, 300);
+  return crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update("voter:" + clientIp(req) + "|" + ua)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 // 认证中间件：校验会话，未通过返回 401
@@ -220,10 +235,59 @@ function parseBody(body) {
 }
 
 const app = express();
+// 隐藏技术栈信息（X-Powered-By: Express）
+app.disable("x-powered-by");
+// 路由大小写敏感：`/api/QaHandler` 这类大小写变体不再命中真实接口，避免鉴权/白名单歧义
+app.set("case sensitive routing", true);
 // 社团风采上传：允许更大的请求体（base64 图片，最大约 15MB → 20MB limit）
 app.use("/api/GalleryHandler", bodyParser.text({ type: () => true, limit: "20mb" }));
 // 限制请求体大小（1MB），防止内存耗尽型 DoS
 app.use(bodyParser.text({ type: () => true, limit: "1mb" }));
+
+// ---------- 反向代理信任边界 ----------
+// 站点只监听回环地址，唯一可达来源是本机 cloudflared。
+// 因此仅当连接来自回环地址时才采用 CF-Connecting-IP / X-Forwarded-For，
+// 防止外部伪造转发头绕过限速、污染日志。
+const TRUSTED_PROXY_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+function isTrustedProxy(req) {
+  const ra = String(req.socket.remoteAddress || "");
+  return TRUSTED_PROXY_ADDRS.has(ra) || ra.startsWith("::ffff:127.");
+}
+// 头部来源 IP 必须是合法 IP 字面量，否则忽略
+// （防止有人用任意字符串当限速键，制造海量桶或绕过限速）
+function isValidIpString(s) {
+  if (typeof s !== "string") return false;
+  const v = s.trim();
+  if (!v || v.length > 45) return false;
+  if (net.isIPv4(v) || net.isIPv6(v)) return true;
+  return false;
+}
+function clientIp(req) {
+  if (isTrustedProxy(req)) {
+    const cf = req.headers["cf-connecting-ip"];
+    if (cf) {
+      const v = String(cf).split(",")[0].trim();
+      if (isValidIpString(v)) return v;
+      // 非法值不再直接采信，直接落到最细粒度的兜底键
+      return "invalid-cf-header";
+    }
+    const xff = req.headers["x-forwarded-for"];
+    if (xff) {
+      const v = String(xff).split(",")[0].trim();
+      if (isValidIpString(v)) return v;
+      return "invalid-xff-header";
+    }
+  }
+  return String(req.socket.remoteAddress || "unknown");
+}
+// 是否经 HTTPS 回源（cloudflared 注入 x-forwarded-proto）
+function isHttps(req) {
+  return req.headers["x-forwarded-proto"] === "https" || req.secure === true;
+}
+// Cookie 安全属性：仅 HTTPS 时带 Secure（本地 http 调试不受影响）
+function cookieSecure(req) {
+  return isHttps(req);
+}
 
 // 基础安全响应头
 app.use((req, res, next) => {
@@ -231,33 +295,108 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()");
+  // HSTS：仅在 HTTPS 回源时下发
+  if (isHttps(req)) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  // CSP：仅允许同源资源（Docusaurus 需要 inline script/style）
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "media-src 'self' blob: data: https: http:",
+      "connect-src 'self' https://cloudflareinsights.com",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join("; ")
+  );
+  next();
+});
+
+// ---------- CSRF 防护：状态变更请求校验 Origin ----------
+// 浏览器跨站 POST 必带 Origin；同站请求 Origin 与 Host 一致。
+// 另配合 SameSite=Lax Cookie，纵深防御。
+const EXTRA_ALLOWED_ORIGINS = new Set([
+  "chunbosama.xyz",
+  "ai.chunbosama.xyz",
+  "localhost:3000",
+  "localhost:4000",
+  "127.0.0.1:3000",
+  "127.0.0.1:4000",
+]);
+app.use((req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  const origin = req.headers.origin;
+  if (origin) {
+    let host = "";
+    try {
+      host = new URL(origin).host;
+    } catch (e) {
+      host = "";
+    }
+    const sameHost = host && host === String(req.headers.host || "");
+    if (!sameHost && !EXTRA_ALLOWED_ORIGINS.has(host)) {
+      return res.status(403).send("Error: 非法请求来源");
+    }
+  }
   next();
 });
 
 // ---------- 简单的内存速率限制（防暴力破解/刷接口）----------
-const rateBuckets = {}; // ip -> { count, resetAt }
-function rateLimit(opts) {
-  const { windowMs = 60000, max = 60 } = opts || {};
-  return (req, res, next) => {
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-    const key = ip;
-    const now = Date.now();
-    const b = rateBuckets[key];
-    if (!b || b.resetAt < now) {
-      rateBuckets[key] = { count: 1, resetAt: now + windowMs };
-      return next();
+const rateBuckets = {}; // key -> { count, resetAt }
+// 通用限速判定：返回 true=放行 / false=超限
+function allowRate(key, windowMs, max) {
+  const now = Date.now();
+  const b = rateBuckets[key];
+  if (!b || b.resetAt < now) {
+    // 防内存无限增长：桶过多时清理已过期项
+    if (Object.keys(rateBuckets).length > 5000) {
+      for (const k of Object.keys(rateBuckets)) {
+        if (rateBuckets[k].resetAt < now) delete rateBuckets[k];
+      }
     }
-    b.count += 1;
-    if (b.count > max) {
-      return res.status(429).send("Error: 请求过于频繁，请稍后再试");
+    rateBuckets[key] = { count: 1, resetAt: now + windowMs };
+    return true;
+  }
+  b.count += 1;
+  return b.count <= max;
+}
+// 统一的限速超限响应：保持 JSON 风格 + 告知客户端何时可重试
+function tooManyRequests(res, windowMs) {
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(windowMs / 1000))));
+  return res
+    .status(429)
+    .type("json")
+    .send(JSON.stringify({ msg: "Error: 请求过于频繁，请稍后再试" }));
+}
+// 双闸限速：① 每来源 IP ② 全局兜底
+// 全局闸的意义：即使来源 IP 被伪造（例如本机进程伪造 CF-Connecting-IP），
+// 攻击者也无法突破「单位时间总请求量」上限。
+function rateLimit(opts) {
+  const { windowMs = 60000, max = 60, name = "generic", globalMax = 0 } = opts || {};
+  return (req, res, next) => {
+    if (globalMax > 0 && !allowRate("global:" + name, windowMs, globalMax)) {
+      return tooManyRequests(res, windowMs);
+    }
+    // 仅采信回环代理注入的真实客户端 IP；外部伪造 XFF 无效
+    if (!allowRate(name + ":" + clientIp(req), windowMs, max)) {
+      return tooManyRequests(res, windowMs);
     }
     next();
   };
 }
 
 // 登录/注册：更严格限速（同一 IP 每分钟最多 10 次）
-app.post("/api/LoginHandler", rateLimit({ windowMs: 60000, max: 10 }));
-app.post("/api/RegisterHandler", rateLimit({ windowMs: 60000, max: 10 }));
+// 注意：两者使用独立命名空间，避免互相挤占额度（原先共用同一个桶）
+app.post("/api/LoginHandler", rateLimit({ windowMs: 60000, max: 10, name: "login", globalMax: 200 }));
+app.post("/api/RegisterHandler", rateLimit({ windowMs: 60000, max: 10, name: "register", globalMax: 120 }));
 
 // ==== 注册 ====
 app.post("/api/RegisterHandler", (req, res) => {
@@ -284,7 +423,7 @@ app.post("/api/RegisterHandler", (req, res) => {
   saveData(data);
   // 设置会话，注册后自动登录
   res.cookie(SESSION_COOKIE, createSessionToken(email), {
-    httpOnly: true, sameSite: "lax", secure: false, path: "/", maxAge: SESSION_TTL_MS,
+    httpOnly: true, sameSite: "lax", secure: cookieSecure(req), path: "/", maxAge: SESSION_TTL_MS,
   });
   return res.send("Success");
 });
@@ -360,7 +499,7 @@ app.post("/api/LoginHandler", (req, res) => {
   const ok = (typeof stored === "object" ? stored.hash : stored) === hashPassword(body.password, email);
   if (!ok) return res.status(401).send("Error: 账号或密码错误");
   res.cookie(SESSION_COOKIE, createSessionToken(email), {
-    httpOnly: true, sameSite: "lax", secure: false, path: "/", maxAge: SESSION_TTL_MS,
+    httpOnly: true, sameSite: "lax", secure: cookieSecure(req), path: "/", maxAge: SESSION_TTL_MS,
   });
   return res.send("Success");
 });
@@ -381,12 +520,85 @@ app.get("/api/SessionHandler", (req, res) => {
 });
 
 // ==== 报名 ====
+const SIGNUP_MAX_TOTAL = 2000;
+// 报名资料格式校验
+function isValidEmailAddr(s) {
+  return typeof s === "string" && s.length <= 60 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+}
+function isValidPhoneNo(s) {
+  return typeof s === "string" && /^1[3-9]\d{9}$/.test(s);
+}
+// 报名窗口是否开启（服务端强制校验；前端禁用表单只是障眼法）
+function signupWindowState(data) {
+  const win = data.signupTime || {};
+  const now = Date.now();
+  const start = win.start ? Date.parse(win.start) : NaN;
+  const end = win.end ? Date.parse(win.end) : NaN;
+  if (!Number.isFinite(start) && !Number.isFinite(end)) return { ok: true };
+  if (Number.isFinite(start) && now < start) return { ok: false, msg: "报名尚未开始" };
+  if (Number.isFinite(end) && now > end) return { ok: false, msg: "报名已截止" };
+  return { ok: true };
+}
+
+// ==== 报名提交 ====
 app.all("/api/SignUpHandler", (req, res) => {
   const data = loadData();
   if (req.method === "POST") {
+    // 限速：单 IP 每分钟 5 次 + 全局兜底（旧实现无任何限速，可无限灌水）
+    if (!allowRate("signup:global", 60000, 60)) return tooManyRequests(res, 60000);
+    if (!allowRate("signup:" + clientIp(req), 60000, 5)) return tooManyRequests(res, 60000);
+
     const body = parseBody(req.body);
-    if (!body || body.timestamp === undefined || !body.data) return res.status(400).send("Error: no request body.");
-    data.partList[String(body.timestamp)] = body.data;
+    if (!body || typeof body !== "object" || !body.data) {
+      return res.status(400).send("Error: no request body.");
+    }
+
+    // 1) 服务端强制校验报名时间窗
+    const win = signupWindowState(data);
+    if (!win.ok) return res.status(400).send("Error: " + win.msg);
+
+    // 2) 字段校验（必填/长度/格式），防止空值与脏数据落库
+    const raw = typeof body.data === "object" ? body.data : {};
+    const name = String(raw.name === undefined ? "" : raw.name).trim();
+    const classes = String(raw.classes === undefined ? "" : raw.classes).trim();
+    const email = String(raw.email === undefined ? "" : raw.email)
+      .trim()
+      .toLowerCase();
+    const phone = String(raw.phone === undefined ? "" : raw.phone).trim();
+    if (!name || name.length > 20) return res.status(400).send("Error: 姓名不合法（1-20 字）");
+    if (!classes || classes.length > 30)
+      return res.status(400).send("Error: 班级不合法（1-30 字）");
+    if (!isValidEmailAddr(email)) return res.status(400).send("Error: 邮箱格式不正确");
+    if (!isValidPhoneNo(phone)) return res.status(400).send("Error: 手机号格式不正确");
+
+    // 3) 键校验：同数字时间戳键不可覆盖（旧实现可直接覆写他人报名）
+    const tkey = String(body.timestamp === undefined ? "" : body.timestamp);
+    if (!/^\d{1,16}$/.test(tkey)) return res.status(400).send("Error: 参数错误");
+    if (!data.partList || typeof data.partList !== "object") data.partList = {};
+    if (data.partList[tkey]) return res.status(400).send("Error: 请勿重复提交");
+
+    // 4) 去重：同一邮箱或手机号只能报名一次
+    const dup = Object.keys(data.partList).some((k) => {
+      const v = data.partList[k];
+      if (!v || typeof v !== "object") return false;
+      return (
+        String(v.email || "").trim().toLowerCase() === email ||
+        String(v.phone || "").trim() === phone
+      );
+    });
+    if (dup) return res.status(400).send("Error: 该邮箱或手机号已报名，请勿重复提交");
+
+    // 5) 总量上限，防止数据无限膨胀
+    if (Object.keys(data.partList).length >= SIGNUP_MAX_TOTAL) {
+      return tooManyRequests(res, 60000);
+    }
+
+    data.partList[tkey] = {
+      name: name,
+      classes: classes,
+      email: email,
+      phone: phone,
+    };
     saveData(data);
     return res.send("Success");
   } else if (req.method === "GET") { // 报名列表：需登录
@@ -395,7 +607,7 @@ app.all("/api/SignUpHandler", (req, res) => {
   } else if (req.method === "DELETE") { // 删除报名：需管理员
     if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
-    if (body.timestamp && data.partList[String(body.timestamp)]) {
+    if (body.timestamp && data.partList && data.partList[String(body.timestamp)]) {
       delete data.partList[String(body.timestamp)];
       saveData(data);
       return res.send("Success");
@@ -687,18 +899,48 @@ app.all("/api/DrawHandler", (req, res) => {
   return res.status(400).json({ msg: "Error: unknown error" });
 });
 
+// ==== 直播地址脱敏 ====
+// 公开接口不得下发源站真实 IP/端口（否则 CF 隐藏源站失效）。
+// 统一改写为对外域名（经 Cloudflare 隧道回源到本机直播服务）。
+const LIVE_PUBLIC_HOST = (process.env.LIVE_PUBLIC_HOST || "live.chunbosama.xyz").trim();
+const IPV4_RE_SRC = "\\b\\d{1,3}(?:\\.\\d{1,3}){3}(?::\\d+)?";
+function hasIpv4(s) {
+  return new RegExp(IPV4_RE_SRC).test(s);
+}
+function publicLiveUrl(u) {
+  if (typeof u !== "string") return "";
+  let s = u.trim();
+  if (!s) return "";
+  // 站内相对路径：原样返回
+  if (s.startsWith("/")) return s;
+  const hadHttp = /^http:\/\//i.test(s);
+  const hadScheme = /^https?:\/\//i.test(s);
+  s = s.replace(/^https?:\/\//i, "");
+  const hadIp = hasIpv4(s);
+  // 任何 IPv4[:端口] 字面量一律替换为对外域名
+  s = s.replace(new RegExp(IPV4_RE_SRC, "g"), LIVE_PUBLIC_HOST);
+  // 必须输出绝对 URL：/live 页用 window.location.href 跳转，无协议会被当相对路径
+  // 源站 IP 或本服务对外域名一律走 https（经 Cloudflare 回源）
+  const hostLower = s.toLowerCase();
+  const pubLower = LIVE_PUBLIC_HOST.toLowerCase();
+  if (hadIp || hostLower === pubLower || hostLower.startsWith(pubLower + "/")) {
+    return "https://" + s;
+  }
+  const scheme = hadHttp ? "http" : "https";
+  return (hadScheme ? scheme + "://" : "https://") + s;
+}
+
 // ==== 直播链接（读取公开，保存需登录）====
-// 说明：该链接为直播页内嵌视频控件播放的 FLV 视频流地址
 app.all("/api/LiveConfigHandler", (req, res) => {
   const data = loadData();
   if (req.method === "GET") {
-    // 公开读取：直播页/导航栏都是游客访问
-    return res.json({ url: data.liveUrl || "" });
+    // 公开读取：直播页/导航栏都是游客访问（输出前脱敏）
+    return res.json({ url: publicLiveUrl(data.liveUrl || "") });
   } else if (req.method === "POST") {
     // 保存链接：需管理员
     if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
     const body = parseBody(req.body);
-    data.liveUrl = body.url || "";
+    data.liveUrl = publicLiveUrl(body.url || "");
     saveData(data);
     return res.send("Success");
   }
@@ -889,8 +1131,65 @@ app.all("/api/VoteHandler", (req, res) => {
         return res.send("Success");
       }
       if (!data.votes.records) data.votes.records = [];
-      for (const id of Object.keys(body)) {
-        data.votes.records.push({ id: id, items: Array.isArray(body[id]) ? body[id] : [], time: Date.now() });
+      // 投票提交：单 IP 限速（另加全局兜底闸）
+      if (!allowRate("vote:global", 60000, 300)) {
+        return tooManyRequests(res, 60000);
+      }
+      if (!allowRate("vote:" + clientIp(req), 60000, 20)) {
+        return tooManyRequests(res, 60000);
+      }
+      const ids = Object.keys(body).filter((k) => k !== "_saveDatas");
+      if (ids.length === 0) return res.status(400).send("Error: 参数错误");
+
+      // 严格校验：投票 ID 必须存在；选项必须是合法选项名，去重且不超过 max。
+      // 旧实现零校验，id/选项任意取值都返回 Success，会写入脏数据。
+      const datas = data.votes.datas || {};
+      const chosen = [];
+      for (const id of ids) {
+        const cfg = datas[String(id)];
+        if (!cfg || typeof cfg !== "object") {
+          return res.status(400).send("Error: 投票不存在");
+        }
+        const rawItems = body[id];
+        if (!Array.isArray(rawItems) || rawItems.length === 0) {
+          return res.status(400).send("Error: 请选择投票选项");
+        }
+        const maxSel = Number(cfg.max) > 0 ? Math.floor(Number(cfg.max)) : 1;
+        const options = cfg.items && typeof cfg.items === "object" ? cfg.items : {};
+        const items = [];
+        for (const it of rawItems) {
+          const key = String(it);
+          if (!Object.prototype.hasOwnProperty.call(options, key)) {
+            return res.status(400).send("Error: 选项不存在");
+          }
+          if (!items.includes(key)) items.push(key);
+        }
+        if (items.length > maxSel) {
+          return res.status(400).send("Error: 最多只能选择 " + maxSel + " 项");
+        }
+        chosen.push({ id: String(id), items: items });
+      }
+
+      // 服务端防重复：投票者身份由服务端派生（IP+UA），客户端无法伪造新身份
+      const voterHash = voterId(req);
+      const votedIds = new Set(
+        (data.votes.records || [])
+          .filter((r) => r && r.voter === voterHash)
+          .map((r) => String(r.id))
+      );
+      if (chosen.some((c) => votedIds.has(c.id))) {
+        return res.status(400).send("Error: 您已经投过票了");
+      }
+      if (data.votes.records.length >= 20000) {
+        return tooManyRequests(res, 60000);
+      }
+      for (const c of chosen) {
+        data.votes.records.push({
+          id: c.id,
+          items: c.items,
+          time: Date.now(),
+          voter: voterHash,
+        });
       }
       saveData(data);
       return res.send("Success");
@@ -901,18 +1200,54 @@ app.all("/api/VoteHandler", (req, res) => {
 });
 
 // ==== Q&A ====
+// 安全设计：公开提交只能「新增提问」，不能指定/覆盖已有条目：
+//  - 键由服务端生成（数字时间戳，兼容后台按 timestamp 编辑的 UI）
+//  - 单条限长、单 IP 限速、总量上限
+// 后台编辑（带 timestamp 更新既有条目）需要管理员权限。
+const QA_MAX_LEN = 200;
+const QA_MAX_TOTAL = 1000;
 app.all("/api/QAHandler", (req, res) => {
   const data = loadData();
-  if (!data.qa) data.qa = {};
+  if (!data.qa || typeof data.qa !== "object") data.qa = {};
   if (req.method === "POST") {
     const body = parseBody(req.body);
     if (!body || typeof body !== "object") return res.status(400).send("Error: no request body.");
-    // 公开提交问题（{ timestamp, data }）
-    if (body.timestamp) {
+
+    // 后台编辑：{ timestamp, data } —— 需管理员，可更新/新增指定条目
+    if (body.timestamp !== undefined && reqRoleAtLeast(req, "admin")) {
       data.qa[String(body.timestamp)] = body.data || { question: "", answer: "" };
       saveData(data);
       return res.send("Success");
     }
+
+    // 公开提交：{ timestamp(忽略), data:{ question } }
+    if (body.timestamp !== undefined) {
+      if (!allowRate("qa:" + clientIp(req), 60000, 5)) {
+        return tooManyRequests(res, 60000);
+      }
+      const raw = body.data && typeof body.data === "object" ? body.data : {};
+      const question = String(raw.question || "")
+        .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+        .trim();
+      if (!question) return res.status(400).send("Error: 问题内容不能为空");
+      if (question.length > QA_MAX_LEN) {
+        return res.status(400).send("Error: 问题过长（最多 " + QA_MAX_LEN + " 字）");
+      }
+      if (Object.keys(data.qa).length >= QA_MAX_TOTAL) {
+        return tooManyRequests(res, 60000);
+      }
+      // 服务端生成唯一数字键：客户端无法指定键，因而无法覆盖已有条目
+      let key = Date.now();
+      while (data.qa[String(key)]) key += 1;
+      data.qa[String(key)] = {
+        question: question,
+        answer: "",
+        createdAt: Date.now(),
+      };
+      saveData(data);
+      return res.send("Success");
+    }
+
     // 删除问题/答案：需管理员
     if (body.delete !== undefined) {
       if (!reqRoleAtLeast(req, "admin")) return res.status(403).send("Error: 权限不足（需管理员）");
@@ -1141,22 +1476,75 @@ app.use("/gallery", express.static(GALLERY_DIR));
 
 app.use(express.static(BUILD_DIR));
 
-// SPA/多页回退：未命中的路径返回 index.html（处理直接访问深层路由）
-app.use((req, res, next) => {
-  if (req.method !== "GET") return next();
-  res.sendFile(path.join(BUILD_DIR, "index.html"));
+// 预扫描构建产物中的真实页面路由（含 index.html 的目录），用于精确 404
+const PAGE_ROUTES = (() => {
+  const set = new Set(["/"]);
+  const walk = (dir, rel) => {
+    let ents = [];
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    if (ents.some((e) => e.isFile() && e.name === "index.html")) set.add(rel + "/");
+    for (const e of ents) {
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel + "/" + e.name);
+    }
+  };
+  walk(BUILD_DIR, "");
+  return set;
+})();
+
+// 兜底：不再把所有未命中路径都回退 index.html（避免软 404 与路径探测）
+// 注意：404 一律 no-store，避免被 Cloudflare 按浏览器缓存 TTL 长期缓存（缓存污染）
+function noStore(res) {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  return res;
+}
+app.use((req, res) => {
+  // API 路径：返回 JSON 404
+  if (req.path.startsWith("/api/")) return noStore(res).status(404).json({ msg: "Error: not found" });
+  // 静态资源类请求（带扩展名）：返回纯文本 404
+  if (path.extname(req.path)) return noStore(res).status(404).type("txt").send("Not Found");
+  // 页面类请求：仅命中真实路由时回退 index.html
+  if (req.method === "GET") {
+    const normalized = req.path.endsWith("/") ? req.path : req.path + "/";
+    if (PAGE_ROUTES.has(normalized)) return res.sendFile(path.join(BUILD_DIR, "index.html"));
+    const f404 = path.join(BUILD_DIR, "404.html");
+    if (fs.existsSync(f404)) {
+      // sendFile 会自行写入 Cache-Control，这里用 headers 选项确保 no-store
+      return res
+        .status(404)
+        .sendFile(f404, { headers: { "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0" } });
+    }
+  }
+  return noStore(res)
+    .status(404)
+    .type("html")
+    .send("<!DOCTYPE html><html><head><title>404</title></head><body><h1>404 Not Found</h1></body></html>");
 });
 
-app.listen(PORT, "::", () => {
-  // 启动时迁移用户数据（旧字符串哈希 -> 对象格式）并确保初始超级管理员存在
-  try {
-    const d = loadData();
-    migrateUsers(d);
-    // 初始超级管理员：若指定邮箱已存在用户，则提升为 super
-    if (d.users[SUPER_ADMIN_EMAIL]) {
-      d.users[SUPER_ADMIN_EMAIL].role = "super";
-      saveData(d);
-    }
-  } catch (e) {}
-  console.log(`[生产服务器] 运行于 http://0.0.0.0:${PORT} （静态目录: ${BUILD_DIR}）`);
-});
+// 启动时迁移用户数据（旧字符串哈希 -> 对象格式）并确保初始超级管理员存在
+try {
+  const d = loadData();
+  migrateUsers(d);
+  if (d.users[SUPER_ADMIN_EMAIL]) {
+    d.users[SUPER_ADMIN_EMAIL].role = "super";
+    saveData(d);
+  }
+} catch (e) {}
+
+// 仅监听回环地址：站点只能由本机 cloudflared 回源访问，公网无法直连源站
+const BIND_HOSTS = (process.env.BIND_HOST || "127.0.0.1,::1")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+for (const host of BIND_HOSTS) {
+  const srv = app.listen(PORT, host, () => {
+    console.log(`[生产服务器] 监听 http://${host}:${PORT} （静态目录: ${BUILD_DIR}）`);
+  });
+  srv.on("error", (e) => {
+    console.error(`[生产服务器] 监听 ${host}:${PORT} 失败: ${e && e.message}`);
+  });
+}
